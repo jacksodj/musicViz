@@ -1,6 +1,7 @@
 // Authentication state management
 
 import { writable, derived } from 'svelte/store';
+import { SpotifyAuth } from '$lib/auth/SpotifyAuth.js';
 
 /**
  * Authentication status
@@ -74,4 +75,86 @@ export function setAuthError(error) {
 export function setAuthenticating() {
   authStatus.set('authenticating');
   authError.set(null);
+}
+
+/**
+ * Check for existing authentication on app startup
+ * Attempts to restore authentication from persisted tokens
+ */
+export async function checkExistingAuth() {
+  console.log('[authStore] Checking for existing authentication...');
+
+  try {
+    const spotifyAuth = new SpotifyAuth();
+
+    // Check if we have stored tokens
+    const isAuth = await spotifyAuth.isAuthenticated();
+    if (!isAuth) {
+      console.log('[authStore] No valid authentication found');
+      return false;
+    }
+
+    // Get the stored token
+    const tokenData = await spotifyAuth.getStoredToken();
+    if (!tokenData) {
+      console.log('[authStore] No stored token found');
+      return false;
+    }
+
+    // Check if token is expired
+    const now = Date.now() / 1000; // Convert to seconds
+    if (tokenData.expires_at && now >= tokenData.expires_at) {
+      console.log('[authStore] Token expired, attempting refresh...');
+
+      // Try to refresh the token
+      if (tokenData.refresh_token) {
+        try {
+          const refreshedData = await spotifyAuth.refreshToken(tokenData.refresh_token);
+          tokenData.access_token = refreshedData.access_token;
+          console.log('[authStore] Token refreshed successfully');
+        } catch (refreshError) {
+          console.error('[authStore] Failed to refresh token:', refreshError);
+          resetAuth();
+          return false;
+        }
+      } else {
+        console.log('[authStore] No refresh token available');
+        resetAuth();
+        return false;
+      }
+    }
+
+    // Get user profile to verify token is valid
+    try {
+      const user = await spotifyAuth.getCurrentUser();
+
+      // Set authenticated state
+      setAuthenticated(user, tokenData.access_token);
+      console.log('[authStore] Restored authentication for user:', user.display_name || user.id);
+      return true;
+    } catch (error) {
+      console.error('[authStore] Failed to get user profile:', error);
+
+      // Token might be invalid, try refreshing
+      if (tokenData.refresh_token) {
+        try {
+          const refreshedData = await spotifyAuth.refreshToken(tokenData.refresh_token);
+          const user = await spotifyAuth.getCurrentUser();
+          setAuthenticated(user, refreshedData.access_token);
+          console.log('[authStore] Restored authentication after refresh for user:', user.display_name || user.id);
+          return true;
+        } catch (refreshError) {
+          console.error('[authStore] Failed to refresh and restore auth:', refreshError);
+          resetAuth();
+          return false;
+        }
+      }
+
+      resetAuth();
+      return false;
+    }
+  } catch (error) {
+    console.error('[authStore] Error checking existing auth:', error);
+    return false;
+  }
 }

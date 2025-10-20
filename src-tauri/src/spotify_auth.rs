@@ -4,6 +4,11 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
+use keyring::Entry;
+
+// Keychain service and account names
+const KEYRING_SERVICE: &str = "musicViz";
+const KEYRING_ACCOUNT: &str = "spotify_tokens";
 
 /// Temporary storage for PKCE code_verifier during OAuth flow
 pub struct PKCEState {
@@ -33,8 +38,70 @@ pub struct SpotifyAuthState {
 
 impl SpotifyAuthState {
     pub fn new() -> Self {
+        // Try to load persisted tokens on startup
+        let token = match Self::load_from_keyring() {
+            Ok(Some(t)) => {
+                println!("Loaded persisted Spotify tokens");
+                Some(t)
+            }
+            Ok(None) => {
+                println!("No persisted Spotify tokens found");
+                None
+            }
+            Err(e) => {
+                println!("Failed to load persisted tokens: {}", e);
+                None
+            }
+        };
+
         Self {
-            token: Mutex::new(None),
+            token: Mutex::new(token),
+        }
+    }
+
+    /// Save tokens to OS keyring
+    fn save_to_keyring(token: &SpotifyToken) -> Result<(), String> {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
+
+        let json = serde_json::to_string(token)
+            .map_err(|e| format!("Failed to serialize token: {}", e))?;
+
+        entry.set_password(&json)
+            .map_err(|e| format!("Failed to save to keyring: {}", e))?;
+
+        println!("Saved tokens to keyring");
+        Ok(())
+    }
+
+    /// Load tokens from OS keyring
+    fn load_from_keyring() -> Result<Option<SpotifyToken>, String> {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
+
+        match entry.get_password() {
+            Ok(json) => {
+                let token = serde_json::from_str(&json)
+                    .map_err(|e| format!("Failed to deserialize token: {}", e))?;
+                Ok(Some(token))
+            }
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(format!("Failed to load from keyring: {}", e))
+        }
+    }
+
+    /// Delete tokens from OS keyring
+    fn delete_from_keyring() -> Result<(), String> {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+            .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
+
+        match entry.delete_credential() {
+            Ok(()) => {
+                println!("Deleted tokens from keyring");
+                Ok(())
+            }
+            Err(keyring::Error::NoEntry) => Ok(()), // Already deleted
+            Err(e) => Err(format!("Failed to delete from keyring: {}", e))
         }
     }
 }
@@ -81,14 +148,17 @@ pub fn store_spotify_token(
         expires_at,
     };
 
+    // Save to memory
     let mut state_token = state.token.lock().unwrap();
     *state_token = Some(token.clone());
 
     println!("Stored Spotify token (expires at: {})", expires_at);
 
-    // TODO Phase 2: Persist to OS keychain
-    // macOS: Use keyring-rs crate
-    // Android: Use EncryptedSharedPreferences
+    // Persist to OS keychain
+    if let Err(e) = SpotifyAuthState::save_to_keyring(&token) {
+        println!("Warning: Failed to persist token to keyring: {}", e);
+        // Don't fail the operation if persistence fails - memory storage still works
+    }
 
     Ok(())
 }
@@ -135,8 +205,15 @@ pub fn is_authenticated(state: State<SpotifyAuthState>) -> Result<bool, String> 
 /// Clear stored tokens (logout)
 #[tauri::command]
 pub fn logout(state: State<SpotifyAuthState>) -> Result<(), String> {
+    // Clear from memory
     let mut token = state.token.lock().unwrap();
     *token = None;
+
+    // Clear from keyring
+    if let Err(e) = SpotifyAuthState::delete_from_keyring() {
+        println!("Warning: Failed to delete tokens from keyring: {}", e);
+    }
+
     println!("Cleared Spotify tokens");
     Ok(())
 }

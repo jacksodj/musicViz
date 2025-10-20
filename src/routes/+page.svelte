@@ -4,7 +4,7 @@
   import SpotifyConnect from '$lib/components/SpotifyConnect.svelte';
   import PlayerControls from '$lib/components/PlayerControls.svelte';
   import PluginManager from '$lib/components/PluginManager.svelte';
-  import { isAuthenticated } from '$lib/stores/authStore.js';
+  import { isAuthenticated, checkExistingAuth } from '$lib/stores/authStore.js';
   import { playerStore, playerState } from '$lib/stores/playerStore.js';
   import { analysisStore, hasAnalysis, beats, analysisError } from '$lib/stores/analysisStore.js';
   import { spotifyAnalysisService } from '$lib/services/SpotifyAnalysisService.js';
@@ -160,7 +160,16 @@
     return { native, milkdrop };
   });
 
-  onMount(() => {
+  onMount(async () => {
+    // Check for existing authentication (persisted tokens)
+    console.log('[+page] Checking for existing authentication...');
+    const hasExistingAuth = await checkExistingAuth();
+    if (hasExistingAuth) {
+      console.log('[+page] Restored existing authentication');
+    } else {
+      console.log('[+page] No existing authentication found');
+    }
+
     // Initialize plugin system
     initializePluginSystem();
     availablePlugins = pluginRegistry.list();
