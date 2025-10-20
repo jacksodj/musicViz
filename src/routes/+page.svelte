@@ -61,11 +61,22 @@
   async function setupAudio() {
     try {
       console.log('Setting up audio integration...');
+      console.log('playerStore.spotifyPlayer:', playerStore.spotifyPlayer);
+      console.log('Player ready?', playerStore.spotifyPlayer?.isPlayerReady());
+
       // Pass the SpotifyPlayer instance, not the raw Spotify.Player
       audioIntegration = await setupAudioIntegration(playerStore.spotifyPlayer);
-      console.log('Audio integration ready');
+      console.log('Audio integration ready:', audioIntegration);
+
+      // Log audio store state
+      setTimeout(() => {
+        console.log('Audio analyzing?', $isAnalyzing);
+        console.log('Has spectrum data?', $spectrumBars !== null);
+        console.log('Has waveform data?', $waveformData !== null);
+      }, 2000);
     } catch (error) {
       console.error('Failed to setup audio integration:', error);
+      console.error('Error details:', error.message, error.stack);
     }
   }
 

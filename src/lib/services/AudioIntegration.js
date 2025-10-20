@@ -107,37 +107,72 @@ export class AudioIntegration {
    * @returns {Promise<HTMLAudioElement>}
    */
   async _findSpotifyAudioElement() {
+    console.log('[AudioIntegration] Starting search for Spotify audio element...');
+
     // Strategy 1: Look for audio elements with Spotify URLs
     let audioElements = document.querySelectorAll('audio');
+    console.log(`[AudioIntegration] Found ${audioElements.length} audio elements on page`);
 
     for (const element of audioElements) {
+      console.log('[AudioIntegration] Checking audio element:', {
+        src: element.src,
+        paused: element.paused,
+        readyState: element.readyState
+      });
+
       if (element.src && (
         element.src.includes('spotify') ||
         element.src.includes('audio-ak-') || // Spotify CDN pattern
-        element.src.includes('scdn.co')
+        element.src.includes('scdn.co') ||
+        element.src.includes('audio-fa.scdn.co')
       )) {
+        console.log('[AudioIntegration] ✓ Found Spotify audio element:', element.src);
         return element;
       }
     }
 
-    // Strategy 2: The SDK might create the element after initialization
+    // Strategy 2: Look for ANY audio element (Spotify might use blob URLs)
+    console.log('[AudioIntegration] No Spotify URLs found, checking for any audio element...');
+    for (const element of audioElements) {
+      if (element.src || element.srcObject) {
+        console.log('[AudioIntegration] ✓ Found audio element (any src):', element.src || 'srcObject');
+        return element;
+      }
+    }
+
+    // Strategy 3: The SDK might create the element after initialization
     // Wait a bit and try again
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log('[AudioIntegration] Waiting 2 seconds for SDK to create audio element...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     audioElements = document.querySelectorAll('audio');
+    console.log(`[AudioIntegration] After wait: Found ${audioElements.length} audio elements`);
+
     for (const element of audioElements) {
-      if (element.src) {
-        console.log('Found audio element with src:', element.src);
+      console.log('[AudioIntegration] Checking audio element:', {
+        src: element.src,
+        srcObject: element.srcObject,
+        paused: element.paused,
+        readyState: element.readyState
+      });
+
+      if (element.src || element.srcObject) {
+        console.log('[AudioIntegration] ✓ Found audio element:', element.src || 'srcObject');
         return element;
       }
     }
 
-    // Strategy 3: Use MutationObserver to wait for audio element creation
+    // Strategy 4: Use MutationObserver to wait for audio element creation
+    console.log('[AudioIntegration] Using MutationObserver to watch for audio element...');
+
     return new Promise((resolve, reject) => {
       const observer = new MutationObserver((mutations) => {
         const audioElements = document.querySelectorAll('audio');
+        console.log(`[AudioIntegration] MutationObserver: Found ${audioElements.length} audio elements`);
+
         for (const element of audioElements) {
-          if (element.src) {
+          if (element.src || element.srcObject) {
+            console.log('[AudioIntegration] ✓ MutationObserver found audio element!');
             observer.disconnect();
             resolve(element);
             return;
@@ -150,20 +185,12 @@ export class AudioIntegration {
         subtree: true
       });
 
-      // Timeout after 10 seconds
+      // Timeout after 15 seconds
       setTimeout(() => {
         observer.disconnect();
-        reject(new Error('Timeout waiting for Spotify audio element'));
-      }, 10000);
-
-      // Also trigger playback to force element creation
-      // The Spotify SDK might not create the audio element until playback starts
-      if (this.spotifyPlayer.currentState.paused) {
-        console.log('Triggering playback to force audio element creation...');
-        this.spotifyPlayer.play().catch(err => {
-          console.warn('Could not trigger playback:', err);
-        });
-      }
+        console.error('[AudioIntegration] ✗ Timeout waiting for Spotify audio element after 15s');
+        reject(new Error('Timeout waiting for Spotify audio element. The Spotify SDK may not create an audio element until music is playing. Try starting playback from your Spotify client.'));
+      }, 15000);
     });
   }
 
@@ -257,33 +284,73 @@ export class AudioIntegration {
  */
 export async function setupAudioIntegration(spotifyPlayer) {
   const integration = new AudioIntegration(spotifyPlayer);
+  let connectionAttempted = false;
+  let connectionSuccessful = false;
+
+  console.log('[setupAudioIntegration] Starting audio integration setup...');
 
   // Initialize the analyzer
   await integration.initialize();
 
+  // Attempt to connect to Spotify audio
+  const attemptConnection = async (context = 'unknown') => {
+    if (connectionSuccessful) {
+      console.log('[setupAudioIntegration] Already connected, skipping');
+      return;
+    }
+
+    try {
+      console.log(`[setupAudioIntegration] Attempting connection (context: ${context})...`);
+      await integration.connectToSpotify();
+      connectionSuccessful = true;
+      console.log('[setupAudioIntegration] ✓ Connection successful!');
+    } catch (error) {
+      console.error(`[setupAudioIntegration] ✗ Connection failed (${context}):`, error.message);
+
+      // Don't throw - we'll try again when playback starts
+      if (!connectionAttempted) {
+        console.log('[setupAudioIntegration] Will retry when playback starts...');
+      }
+    } finally {
+      connectionAttempted = true;
+    }
+  };
+
   // Listen for player ready event to connect audio
   if (spotifyPlayer.isPlayerReady()) {
-    // Player is already ready, connect immediately
-    await integration.connectToSpotify();
+    // Player is already ready, try to connect
+    console.log('[setupAudioIntegration] Player is ready, attempting immediate connection...');
+    await attemptConnection('player-ready');
   } else {
     // Wait for player to be ready
+    console.log('[setupAudioIntegration] Waiting for player to be ready...');
     spotifyPlayer.on('ready', async () => {
-      try {
-        await integration.connectToSpotify();
-      } catch (error) {
-        console.error('Failed to connect audio after player ready:', error);
-      }
+      console.log('[setupAudioIntegration] Player ready event received');
+      await attemptConnection('ready-event');
     });
   }
 
-  // Listen for player state changes
-  spotifyPlayer.on('state_changed', (state) => {
+  // Listen for player state changes - retry connection when playback starts
+  spotifyPlayer.on('state_changed', async (state) => {
+    console.log('[setupAudioIntegration] Player state changed:', {
+      paused: state.paused,
+      hasTrack: !!state.track,
+      connected: connectionSuccessful
+    });
+
+    if (!state.paused && state.track && !connectionSuccessful) {
+      // Music is playing but we're not connected - try to connect now!
+      console.log('[setupAudioIntegration] Music is playing, retrying audio connection...');
+      await attemptConnection('playback-started');
+    }
+
     if (state.paused) {
       // Optionally pause analysis when playback is paused
       // integration.pause();
     } else {
       // Resume analysis when playback starts
-      if (integration.analyzer && !integration.analyzer.isAnalyzing) {
+      if (integration.analyzer && !integration.analyzer.isAnalyzing && connectionSuccessful) {
+        console.log('[setupAudioIntegration] Resuming audio analysis...');
         integration.resumeAnalysis();
       }
     }
@@ -291,9 +358,14 @@ export async function setupAudioIntegration(spotifyPlayer) {
 
   // Ensure audio context resumes on user interaction
   const resumeOnInteraction = async () => {
+    console.log('[setupAudioIntegration] User interaction detected, resuming audio context...');
     await integration.resume();
-    document.removeEventListener('click', resumeOnInteraction);
-    document.removeEventListener('keydown', resumeOnInteraction);
+
+    // Also retry connection if not successful yet
+    if (!connectionSuccessful && spotifyPlayer.isPlayerReady()) {
+      console.log('[setupAudioIntegration] Retrying connection after user interaction...');
+      await attemptConnection('user-interaction');
+    }
   };
 
   document.addEventListener('click', resumeOnInteraction, { once: true });
