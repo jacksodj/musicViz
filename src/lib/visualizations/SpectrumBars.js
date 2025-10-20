@@ -10,6 +10,8 @@ export class SpectrumBars {
 		this.width = 0;
 		this.height = 0;
 		this.dpr = 1;
+		this.renderCount = 0;
+		console.log('[SpectrumBars] Constructor called with ctx:', !!ctx);
 
 		// Configuration
 		this.barCount = 128; // Number of frequency bars
@@ -104,16 +106,51 @@ export class SpectrumBars {
 	 * Render the visualization
 	 */
 	render() {
+		this.renderCount++;
+
 		const ctx = this.ctx;
-		const width = this.width;
-		const height = this.height;
 
-		// Clear canvas with black background
-		ctx.fillStyle = '#000000';
-		ctx.fillRect(0, 0, width, height);
+		if (!ctx) {
+			console.error('[SpectrumBars] No context available!');
+			return;
+		}
 
-		// Calculate bar width
-		const totalSpacing = this.barSpacing * (this.barCount - 1) * this.dpr;
+		// Get actual canvas dimensions from the context's canvas
+		const canvas = ctx.canvas;
+		if (!canvas) {
+			console.error('[SpectrumBars] Context has no canvas!');
+			return;
+		}
+
+		// Use actual canvas dimensions, not stored values
+		const width = canvas.width;
+		const height = canvas.height;
+
+		if (this.renderCount <= 5 || this.renderCount % 100 === 0) {
+			console.log(`[SpectrumBars] render() #${this.renderCount}`);
+			console.log('  - ctx valid:', !!ctx);
+			console.log('  - canvas:', canvas);
+			console.log('  - actual canvas width:', width, 'height:', height);
+			console.log('  - stored width:', this.width, 'stored height:', this.height);
+			console.log('  - canvas in DOM:', document.body.contains(canvas));
+		}
+
+		if (width === 0 || height === 0) {
+			console.warn('[SpectrumBars] Canvas has zero dimensions, skipping render');
+			return;
+		}
+
+		try {
+			// Clear canvas with black background
+			ctx.fillStyle = '#000000';
+			ctx.fillRect(0, 0, width, height);
+
+			if (this.renderCount <= 5) {
+				console.log(`[SpectrumBars] Successfully cleared canvas`);
+			}
+
+		// Calculate bar width (use dpr = 1 since we're using actual canvas pixel dimensions)
+		const totalSpacing = this.barSpacing * (this.barCount - 1);
 		const availableWidth = width - totalSpacing;
 		const barWidth = availableWidth / this.barCount;
 
@@ -130,7 +167,7 @@ export class SpectrumBars {
 		// Render bars
 		for (let i = 0; i < this.barCount; i++) {
 			const barHeight = this.currentValues[i] * height;
-			const x = i * (barWidth + this.barSpacing * this.dpr);
+			const x = i * (barWidth + this.barSpacing);
 			const y = height - barHeight;
 
 			// Draw bar
@@ -139,7 +176,7 @@ export class SpectrumBars {
 
 			// Add subtle glow effect for active bars
 			if (this.currentValues[i] > 0.1) {
-				ctx.shadowBlur = 10 * this.dpr;
+				ctx.shadowBlur = 10;
 				ctx.shadowColor = this.colors[i];
 				ctx.fillRect(x, y, barWidth, barHeight);
 				ctx.shadowBlur = 0;
@@ -148,6 +185,14 @@ export class SpectrumBars {
 
 		// Add reflection effect at bottom
 		this.renderReflection(width, height, barWidth);
+
+			if (this.renderCount === 5) {
+				console.log('[SpectrumBars] First 5 renders completed successfully');
+			}
+		} catch (error) {
+			console.error('[SpectrumBars] Render error:', error);
+			console.error('[SpectrumBars] Error stack:', error.stack);
+		}
 	}
 
 	/**

@@ -61,10 +61,22 @@ export class SpectrumBarsPlugin extends CanvasPlugin {
    * Initialize plugin
    */
   initialize(context) {
+    console.log('[SpectrumBarsPlugin] initialize() called with context:', context);
     super.initialize(context);
+
+    console.log('[SpectrumBarsPlugin] After super.initialize():');
+    console.log('  - canvas:', this.canvas);
+    console.log('  - width:', this.width, 'height:', this.height);
+    console.log('  - dpr:', this.dpr);
 
     // Get fresh context
     const ctx = this.getContext();
+    console.log('[SpectrumBarsPlugin] Got context:', ctx);
+    console.log('  - Context valid:', !!ctx);
+    if (ctx) {
+      console.log('  - Canvas from context:', ctx.canvas);
+      console.log('  - Canvas dimensions:', ctx.canvas?.width, 'x', ctx.canvas?.height);
+    }
 
     // Create SpectrumBars instance with fresh context
     this.visualization = new SpectrumBars(ctx);
@@ -77,7 +89,7 @@ export class SpectrumBarsPlugin extends CanvasPlugin {
       smoothing: this.parameters.smoothing.default
     });
 
-    console.log('[SpectrumBarsPlugin] Initialized');
+    console.log('[SpectrumBarsPlugin] Initialized with visualization:', !!this.visualization);
   }
 
   /**
@@ -111,13 +123,45 @@ export class SpectrumBarsPlugin extends CanvasPlugin {
    * Render visualization
    */
   render() {
+    if (!this.renderCount) {
+      this.renderCount = 0;
+    }
+    this.renderCount++;
+
+    if (this.renderCount <= 5 || this.renderCount % 100 === 0) {
+      console.log(`[SpectrumBarsPlugin] render() call #${this.renderCount}`);
+    }
+
     if (this.visualization) {
       // Update context in case canvas was recreated
       const freshCtx = this.getContext();
+
+      if (this.renderCount <= 5) {
+        console.log(`[SpectrumBarsPlugin] Fresh context:`, !!freshCtx);
+        if (freshCtx && freshCtx.canvas) {
+          console.log(`  - Canvas dimensions: ${freshCtx.canvas.width}x${freshCtx.canvas.height}`);
+          console.log(`  - Canvas in DOM:`, document.body.contains(freshCtx.canvas));
+        }
+      }
+
       if (freshCtx) {
         this.visualization.ctx = freshCtx;
+      } else {
+        console.warn('[SpectrumBarsPlugin] No fresh context available!');
       }
-      this.visualization.render();
+
+      try {
+        this.visualization.render();
+        if (this.renderCount === 5) {
+          console.log('[SpectrumBarsPlugin] First 5 renders completed successfully');
+        }
+      } catch (error) {
+        console.error('[SpectrumBarsPlugin] Render error:', error);
+      }
+    } else {
+      if (this.renderCount <= 5) {
+        console.warn('[SpectrumBarsPlugin] No visualization instance!');
+      }
     }
   }
 

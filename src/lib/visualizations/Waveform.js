@@ -10,6 +10,8 @@ export class Waveform {
 		this.width = 0;
 		this.height = 0;
 		this.dpr = 1;
+		this.renderCount = 0;
+		console.log('[Waveform] Constructor called with ctx:', !!ctx);
 
 		// Configuration
 		this.lineWidth = 2; // Line thickness
@@ -66,17 +68,56 @@ export class Waveform {
 	 * Render the visualization
 	 */
 	render() {
+		this.renderCount++;
+
 		const ctx = this.ctx;
-		const width = this.width;
-		const height = this.height;
 
-		// Clear canvas with black background
-		ctx.fillStyle = '#000000';
-		ctx.fillRect(0, 0, width, height);
-
-		if (!this.smoothedWaveform || this.smoothedWaveform.length === 0) {
+		if (!ctx) {
+			console.error('[Waveform] No context available!');
 			return;
 		}
+
+		// Get actual canvas dimensions from the context's canvas
+		const canvas = ctx.canvas;
+		if (!canvas) {
+			console.error('[Waveform] Context has no canvas!');
+			return;
+		}
+
+		// Use actual canvas dimensions, not stored values
+		const width = canvas.width;
+		const height = canvas.height;
+
+		if (this.renderCount <= 5 || this.renderCount % 100 === 0) {
+			console.log(`[Waveform] render() #${this.renderCount}`);
+			console.log('  - ctx valid:', !!ctx);
+			console.log('  - canvas:', canvas);
+			console.log('  - actual canvas width:', width, 'height:', height);
+			console.log('  - stored width:', this.width, 'stored height:', this.height);
+			console.log('  - canvas in DOM:', document.body.contains(canvas));
+			console.log('  - smoothedWaveform:', this.smoothedWaveform ? this.smoothedWaveform.length : null);
+		}
+
+		if (width === 0 || height === 0) {
+			console.warn('[Waveform] Canvas has zero dimensions, skipping render');
+			return;
+		}
+
+		try {
+			// Clear canvas with black background
+			ctx.fillStyle = '#000000';
+			ctx.fillRect(0, 0, width, height);
+
+			if (this.renderCount <= 5) {
+				console.log(`[Waveform] Successfully cleared canvas`);
+			}
+
+			if (!this.smoothedWaveform || this.smoothedWaveform.length === 0) {
+				if (this.renderCount <= 5) {
+					console.log('[Waveform] No smoothed waveform data yet');
+				}
+				return;
+			}
 
 		const centerY = height / 2;
 		const waveformData = this.smoothedWaveform;
@@ -100,11 +141,11 @@ export class Waveform {
 		const lineColor = `rgb(${r}, ${g}, ${b})`;
 
 		// Render main waveform
-		this.renderWaveformLine(ctx, waveformData, bufferLength, sliceWidth, centerY, lineColor, 1);
+		this.renderWaveformLine(ctx, waveformData, bufferLength, sliceWidth, centerY, lineColor, 1, height, width);
 
 		// Render mirror effect
 		if (this.mirrorEffect) {
-			this.renderWaveformLine(ctx, waveformData, bufferLength, sliceWidth, centerY, lineColor, -1);
+			this.renderWaveformLine(ctx, waveformData, bufferLength, sliceWidth, centerY, lineColor, -1, height, width);
 		}
 
 		// Render center line
@@ -114,6 +155,14 @@ export class Waveform {
 		ctx.moveTo(0, centerY);
 		ctx.lineTo(width, centerY);
 		ctx.stroke();
+
+			if (this.renderCount === 5) {
+				console.log('[Waveform] First 5 renders completed successfully');
+			}
+		} catch (error) {
+			console.error('[Waveform] Render error:', error);
+			console.error('[Waveform] Error stack:', error.stack);
+		}
 	}
 
 	/**
@@ -125,19 +174,21 @@ export class Waveform {
 	 * @param {number} centerY
 	 * @param {string} color
 	 * @param {number} direction - 1 for normal, -1 for mirror
+	 * @param {number} height - Actual canvas height
+	 * @param {number} width - Actual canvas width
 	 */
-	renderWaveformLine(ctx, data, length, sliceWidth, centerY, color, direction) {
-		const maxAmplitude = (this.height / 2) * 0.8; // Use 80% of half height
+	renderWaveformLine(ctx, data, length, sliceWidth, centerY, color, direction, height, width) {
+		const maxAmplitude = (height / 2) * 0.8; // Use 80% of half height
 
-		// Setup line style
-		ctx.lineWidth = this.lineWidth * this.dpr;
+		// Setup line style (no dpr scaling needed since we're using actual canvas pixels)
+		ctx.lineWidth = this.lineWidth;
 		ctx.strokeStyle = color;
 		ctx.lineCap = 'round';
 		ctx.lineJoin = 'round';
 
 		// Add glow effect
 		if (this.glowEffect) {
-			ctx.shadowBlur = 15 * this.dpr;
+			ctx.shadowBlur = 15;
 			ctx.shadowColor = color;
 		}
 
@@ -172,7 +223,7 @@ export class Waveform {
 		if (direction === 1) {
 			ctx.globalAlpha = 0.1;
 			ctx.fillStyle = color;
-			ctx.lineTo(this.width, centerY);
+			ctx.lineTo(width, centerY);
 			ctx.lineTo(0, centerY);
 			ctx.closePath();
 			ctx.fill();

@@ -87,8 +87,18 @@
         return;
       }
 
+      console.log('[PluginManager] Canvas state before plugin load:');
+      console.log('  - Canvas element:', canvasEl);
+      console.log('  - Canvas in DOM:', document.body.contains(canvasEl));
+      console.log('  - Canvas display:', window.getComputedStyle(canvasEl).display);
+      console.log('  - Canvas visibility:', window.getComputedStyle(canvasEl).visibility);
+      console.log('  - Canvas opacity:', window.getComputedStyle(canvasEl).opacity);
+
       const rect = canvasEl.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
+
+      console.log('  - BoundingClientRect:', rect.width, 'x', rect.height);
+      console.log('  - Device Pixel Ratio:', dpr);
 
       // For Milkdrop plugins, don't get 2D context (they need WebGL)
       // Check if this is a Milkdrop plugin by ID
@@ -104,7 +114,28 @@
       // Only get 2D context for non-Milkdrop plugins
       // NOTE: This context may become stale when canvas is recreated
       if (!isMilkdrop) {
-        context.ctx = canvasEl.getContext('2d');
+        const ctx = canvasEl.getContext('2d');
+        console.log('  - 2D Context acquired:', !!ctx);
+        if (ctx) {
+          console.log('  - Context canvas:', ctx.canvas === canvasEl);
+
+          // Test drawing to verify canvas is working
+          try {
+            ctx.fillStyle = '#FF0000';
+            ctx.fillRect(10, 10, 50, 50);
+            console.log('  - Test drawing successful (red square at 10,10)');
+            // Clear the test drawing
+            setTimeout(() => {
+              ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+              console.log('  - Test drawing cleared');
+            }, 100);
+          } catch (error) {
+            console.error('  - Test drawing failed:', error);
+          }
+        }
+        context.ctx = ctx;
+      } else {
+        console.log('  - Skipping 2D context for Milkdrop plugin');
       }
     } else if (pluginType === 'component') {
       context = {

@@ -73,10 +73,22 @@ export class WaveformPlugin extends CanvasPlugin {
    * Initialize plugin
    */
   initialize(context) {
+    console.log('[WaveformPlugin] initialize() called with context:', context);
     super.initialize(context);
+
+    console.log('[WaveformPlugin] After super.initialize():');
+    console.log('  - canvas:', this.canvas);
+    console.log('  - width:', this.width, 'height:', this.height);
+    console.log('  - dpr:', this.dpr);
 
     // Get fresh context
     const ctx = this.getContext();
+    console.log('[WaveformPlugin] Got context:', ctx);
+    console.log('  - Context valid:', !!ctx);
+    if (ctx) {
+      console.log('  - Canvas from context:', ctx.canvas);
+      console.log('  - Canvas dimensions:', ctx.canvas?.width, 'x', ctx.canvas?.height);
+    }
 
     // Create Waveform instance with fresh context
     this.visualization = new Waveform(ctx);
@@ -91,7 +103,7 @@ export class WaveformPlugin extends CanvasPlugin {
       glowEffect: this.parameters.glowEffect.default
     });
 
-    console.log('[WaveformPlugin] Initialized');
+    console.log('[WaveformPlugin] Initialized with visualization:', !!this.visualization);
   }
 
   /**
@@ -125,13 +137,45 @@ export class WaveformPlugin extends CanvasPlugin {
    * Render visualization
    */
   render() {
+    if (!this.renderCount) {
+      this.renderCount = 0;
+    }
+    this.renderCount++;
+
+    if (this.renderCount <= 5 || this.renderCount % 100 === 0) {
+      console.log(`[WaveformPlugin] render() call #${this.renderCount}`);
+    }
+
     if (this.visualization) {
       // Update context in case canvas was recreated
       const freshCtx = this.getContext();
+
+      if (this.renderCount <= 5) {
+        console.log(`[WaveformPlugin] Fresh context:`, !!freshCtx);
+        if (freshCtx && freshCtx.canvas) {
+          console.log(`  - Canvas dimensions: ${freshCtx.canvas.width}x${freshCtx.canvas.height}`);
+          console.log(`  - Canvas in DOM:`, document.body.contains(freshCtx.canvas));
+        }
+      }
+
       if (freshCtx) {
         this.visualization.ctx = freshCtx;
+      } else {
+        console.warn('[WaveformPlugin] No fresh context available!');
       }
-      this.visualization.render();
+
+      try {
+        this.visualization.render();
+        if (this.renderCount === 5) {
+          console.log('[WaveformPlugin] First 5 renders completed successfully');
+        }
+      } catch (error) {
+        console.error('[WaveformPlugin] Render error:', error);
+      }
+    } else {
+      if (this.renderCount <= 5) {
+        console.warn('[WaveformPlugin] No visualization instance!');
+      }
     }
   }
 
