@@ -61,7 +61,8 @@
   async function setupAudio() {
     try {
       console.log('Setting up audio integration...');
-      audioIntegration = await setupAudioIntegration(playerStore.player);
+      // Pass the SpotifyPlayer instance, not the raw Spotify.Player
+      audioIntegration = await setupAudioIntegration(playerStore.spotifyPlayer);
       console.log('Audio integration ready');
     } catch (error) {
       console.error('Failed to setup audio integration:', error);
