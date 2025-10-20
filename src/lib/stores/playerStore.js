@@ -127,6 +127,9 @@ class PlayerStore {
 
     // State changes
     this.spotifyPlayer.on('state_changed', (playerState) => {
+      console.log('[playerStore] Received state_changed:', playerState);
+      console.log('[playerStore] Current track:', playerState.track);
+
       state.update(s => ({
         ...s,
         isPaused: playerState.paused,
@@ -241,7 +244,28 @@ class PlayerStore {
   }
 
   /**
+   * Start playback with specific content
+   * @param {Object} options - Playback options
+   * @returns {Promise<void>}
+   */
+  async startPlayback(options = {}) {
+    if (!this.spotifyPlayer) {
+      throw new Error('Player not initialized');
+    }
+
+    try {
+      await this.spotifyPlayer.startPlayback(options);
+      state.update(s => ({ ...s, error: null }));
+    } catch (error) {
+      console.error('Failed to start playback:', error);
+      state.update(s => ({ ...s, error: error.message }));
+      throw error;
+    }
+  }
+
+  /**
    * Toggle play/pause
+   * If no music is playing, tries to resume recent playback or prompts to select content
    * @returns {Promise<void>}
    */
   async togglePlay() {
@@ -250,7 +274,19 @@ class PlayerStore {
     }
 
     try {
-      await this.spotifyPlayer.togglePlay();
+      // Check current state
+      const currentState = await this.spotifyPlayer.getCurrentState();
+
+      // If no playback state, try to start playback with empty options
+      // This will resume the user's most recent playback context
+      if (!currentState) {
+        console.log('No active playback - starting playback with last context');
+        await this.spotifyPlayer.startPlayback({});
+      } else {
+        // Normal toggle when playback exists
+        await this.spotifyPlayer.togglePlay();
+      }
+
       state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to toggle play:', error);
@@ -385,3 +421,12 @@ class PlayerStore {
 
 // Export singleton instance
 export const playerStore = new PlayerStore();
+
+// Export stores directly for $ syntax in components
+export {
+  state as playerState,
+  progress as playerProgress,
+  hasNextTrack as playerHasNextTrack,
+  hasPreviousTrack as playerHasPreviousTrack,
+  currentTrackInfo as playerCurrentTrackInfo
+};

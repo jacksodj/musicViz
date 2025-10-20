@@ -1,13 +1,16 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { playerStore } from '$lib/stores/playerStore.js';
+  import {
+    playerStore,
+    playerState,
+    playerProgress,
+    playerHasNextTrack,
+    playerHasPreviousTrack,
+    playerCurrentTrackInfo
+  } from '$lib/stores/playerStore.js';
 
-  // Reactive references to store state using Svelte 5 syntax
-  let state = $derived(playerStore.state);
-  let currentTrackInfo = $derived(playerStore.currentTrackInfo);
-  let progress = $derived(playerStore.progress);
-  let hasNextTrack = $derived(playerStore.hasNextTrack);
-  let hasPreviousTrack = $derived(playerStore.hasPreviousTrack);
+  // Props
+  let { compact = false } = $props();
 
   // Local state
   let isDraggingProgress = $state(false);
@@ -64,12 +67,12 @@
 
   // Handle progress bar click/drag
   async function handleProgressChange(e) {
-    if (!state.duration) return;
+    if (!$playerState.duration) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = x / rect.width;
-    const newPosition = Math.floor(percentage * state.duration);
+    const newPosition = Math.floor(percentage * $playerState.duration);
 
     try {
       await playerStore.seek(newPosition);
@@ -81,14 +84,14 @@
   // Initialize volume from store
   $effect(() => {
     if (!isDraggingVolume) {
-      localVolume = state.volume * 100;
+      localVolume = $playerState.volume * 100;
     }
   });
 
   onMount(() => {
     // Update position every second when playing
     positionUpdateInterval = setInterval(() => {
-      if (state.isPlaying && !isDraggingProgress) {
+      if ($playerState.isPlaying && !isDraggingProgress) {
         // Position is already updated by the player state
       }
     }, 1000);
@@ -101,10 +104,10 @@
   });
 </script>
 
-<div class="player-controls">
-  {#if state.error}
+<div class="player-controls" class:compact>
+  {#if $playerState.error && !compact}
     <div class="error-banner">
-      <span>{state.error}</span>
+      <span>{$playerState.error}</span>
       <button onclick={() => playerStore.clearError()} class="close-error">×</button>
     </div>
   {/if}
@@ -112,11 +115,11 @@
   <div class="player-container">
     <!-- Track Info -->
     <div class="track-info">
-      {#if currentTrackInfo}
-        {#if currentTrackInfo.albumArt}
+      {#if $playerCurrentTrackInfo}
+        {#if $playerCurrentTrackInfo.albumArt}
           <img
-            src={currentTrackInfo.albumArt}
-            alt={currentTrackInfo.album}
+            src={$playerCurrentTrackInfo.albumArt}
+            alt={$playerCurrentTrackInfo.album}
             class="album-art"
           />
         {:else}
@@ -127,8 +130,8 @@
           </div>
         {/if}
         <div class="track-details">
-          <div class="track-name">{currentTrackInfo.name}</div>
-          <div class="track-artist">{currentTrackInfo.artists}</div>
+          <div class="track-name">{$playerCurrentTrackInfo.name}</div>
+          <div class="track-artist">{$playerCurrentTrackInfo.artists}</div>
         </div>
       {:else}
         <div class="album-art-placeholder">
@@ -148,7 +151,7 @@
       <div class="control-buttons">
         <button
           onclick={handlePreviousTrack}
-          disabled={!hasPreviousTrack || !state.isReady}
+          disabled={!$playerHasPreviousTrack || !$playerState.isReady}
           class="control-btn"
           aria-label="Previous track"
         >
@@ -159,11 +162,11 @@
 
         <button
           onclick={handleTogglePlay}
-          disabled={!state.isReady}
+          disabled={!$playerState.isReady}
           class="control-btn play-btn"
-          aria-label={state.isPlaying ? 'Pause' : 'Play'}
+          aria-label={$playerState.isPlaying ? 'Pause' : 'Play'}
         >
-          {#if state.isPlaying}
+          {#if $playerState.isPlaying}
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
             </svg>
@@ -176,7 +179,7 @@
 
         <button
           onclick={handleNextTrack}
-          disabled={!hasNextTrack || !state.isReady}
+          disabled={!$playerHasNextTrack || !$playerState.isReady}
           class="control-btn"
           aria-label="Next track"
         >
@@ -188,7 +191,7 @@
 
       <!-- Progress Bar -->
       <div class="progress-container">
-        <span class="time-label">{formatTime(state.position)}</span>
+        <span class="time-label">{formatTime($playerState.position)}</span>
         <div
           class="progress-bar"
           onclick={handleProgressChange}
@@ -197,14 +200,14 @@
           role="slider"
           tabindex="0"
           aria-valuemin="0"
-          aria-valuemax={state.duration}
-          aria-valuenow={state.position}
+          aria-valuemax={$playerState.duration}
+          aria-valuenow={$playerState.position}
         >
           <div class="progress-bg">
-            <div class="progress-fill" style="width: {progress}%"></div>
+            <div class="progress-fill" style="width: {$playerProgress}%"></div>
           </div>
         </div>
-        <span class="time-label">{formatTime(state.duration)}</span>
+        <span class="time-label">{formatTime($playerState.duration)}</span>
       </div>
     </div>
 
@@ -238,8 +241,14 @@
   .player-controls {
     width: 100%;
     background: rgba(0, 0, 0, 0.95);
+    backdrop-filter: blur(20px);
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     padding: 1rem;
+  }
+
+  .player-controls.compact {
+    padding: 0.5rem 1rem;
+    background: rgba(0, 0, 0, 0.8);
   }
 
   .error-banner {
@@ -283,6 +292,11 @@
     margin: 0 auto;
   }
 
+  .compact .player-container {
+    grid-template-columns: minmax(200px, 1fr) minmax(300px, 2fr) minmax(120px, 180px);
+    gap: 1.5rem;
+  }
+
   /* Track Info */
   .track-info {
     display: flex;
@@ -299,6 +313,11 @@
     flex-shrink: 0;
   }
 
+  .compact .album-art {
+    width: 48px;
+    height: 48px;
+  }
+
   .album-art-placeholder {
     width: 60px;
     height: 60px;
@@ -311,9 +330,19 @@
     flex-shrink: 0;
   }
 
+  .compact .album-art-placeholder {
+    width: 48px;
+    height: 48px;
+  }
+
   .album-art-placeholder svg {
     width: 32px;
     height: 32px;
+  }
+
+  .compact .album-art-placeholder svg {
+    width: 24px;
+    height: 24px;
   }
 
   .track-details {
@@ -331,6 +360,10 @@
     white-space: nowrap;
   }
 
+  .compact .track-name {
+    font-size: 0.9rem;
+  }
+
   .track-artist {
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.875rem;
@@ -339,11 +372,19 @@
     white-space: nowrap;
   }
 
+  .compact .track-artist {
+    font-size: 0.8rem;
+  }
+
   /* Playback Controls */
   .playback-controls {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+  }
+
+  .compact .playback-controls {
+    gap: 0.5rem;
   }
 
   .control-buttons {
@@ -388,6 +429,11 @@
     height: 48px;
   }
 
+  .compact .play-btn {
+    width: 40px;
+    height: 40px;
+  }
+
   .play-btn:hover:not(:disabled) {
     background: #1ed760;
     transform: scale(1.05);
@@ -396,6 +442,11 @@
   .play-btn svg {
     width: 28px;
     height: 28px;
+  }
+
+  .compact .play-btn svg {
+    width: 24px;
+    height: 24px;
   }
 
   /* Progress Bar */
@@ -465,6 +516,10 @@
     border-radius: 2px;
     outline: none;
     cursor: pointer;
+  }
+
+  .compact .volume-slider {
+    width: 80px;
   }
 
   .volume-slider::-webkit-slider-thumb {

@@ -14,6 +14,8 @@ export class SpotifyAuth {
       'streaming',
       'user-read-email',
       'user-read-private',
+      'user-library-read',  // May be needed for audio analysis
+      'user-top-read',      // Additional permissions for track data
     ];
 
     if (!this.clientId) {

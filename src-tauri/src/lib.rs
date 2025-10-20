@@ -1,7 +1,7 @@
 // Spotify authentication module
 mod spotify_auth;
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -31,6 +31,14 @@ pub fn run() {
                     let _ = handle.emit("deep-link", url.as_str());
                 }
             });
+
+            // Enable DevTools for debugging in production builds
+            #[cfg(not(debug_assertions))]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
+            }
 
             Ok(())
         })

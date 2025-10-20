@@ -219,6 +219,52 @@ export class SpotifyPlayer {
   }
 
   /**
+   * Start playback on this device with specific content
+   * @param {Object} options - Playback options
+   * @param {string} options.context_uri - Spotify URI of album/playlist to play
+   * @param {Array<string>} options.uris - Array of track URIs to play
+   * @param {number} options.offset - Offset into context/uris (0-based index or position_ms)
+   * @param {number} options.position_ms - Position to start playback at
+   * @returns {Promise<void>}
+   */
+  async startPlayback(options = {}) {
+    if (!this.deviceId) {
+      throw new Error('Player not ready - no device ID');
+    }
+
+    try {
+      const token = await this.getAccessToken();
+
+      // Build request body
+      const body = {};
+      if (options.context_uri) body.context_uri = options.context_uri;
+      if (options.uris) body.uris = options.uris;
+      if (options.offset !== undefined) body.offset = options.offset;
+      if (options.position_ms !== undefined) body.position_ms = options.position_ms;
+
+      const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${this.deviceId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(`Failed to start playback: ${error.error?.message || response.statusText}`);
+      }
+
+      console.log('Playback started on musicViz Player');
+      this.emit('playback_started', { device_id: this.deviceId, options });
+    } catch (error) {
+      console.error('Failed to start playback:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Play/Resume playback
    * @returns {Promise<void>}
    */
