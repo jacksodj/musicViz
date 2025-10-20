@@ -1,69 +1,78 @@
-// Player state management using Svelte 5 runes
+// Player state management using Svelte stores
 // Manages Spotify Web Playback SDK state
 
+import { writable, derived } from 'svelte/store';
 import { SpotifyPlayer } from '$lib/services/SpotifyPlayer.js';
+
+// Create writable store for player state
+const state = writable({
+  // Playback state
+  isPlaying: false,
+  isPaused: true,
+
+  // Current track info
+  currentTrack: null,
+
+  // Playback position
+  position: 0,
+  duration: 0,
+
+  // Volume (0.0 to 1.0)
+  volume: 1.0,
+
+  // Device info
+  deviceId: null,
+
+  // Player status
+  isReady: false,
+  isInitializing: false,
+
+  // Error handling
+  error: null,
+
+  // Queue info
+  nextTracks: [],
+  previousTracks: []
+});
+
+// Derived stores
+const progress = derived(state, $state => {
+  if ($state.duration === 0) return 0;
+  return ($state.position / $state.duration) * 100;
+});
+
+const hasNextTrack = derived(state, $state => {
+  return $state.nextTracks && $state.nextTracks.length > 0;
+});
+
+const hasPreviousTrack = derived(state, $state => {
+  return $state.previousTracks && $state.previousTracks.length > 0;
+});
+
+const currentTrackInfo = derived(state, $state => {
+  if (!$state.currentTrack) return null;
+
+  return {
+    name: $state.currentTrack.name,
+    artists: $state.currentTrack.artists.map(a => a.name).join(', '),
+    album: $state.currentTrack.album.name,
+    albumArt: $state.currentTrack.album.images[0]?.url,
+    duration: $state.currentTrack.duration_ms,
+    uri: $state.currentTrack.uri
+  };
+});
 
 class PlayerStore {
   // Player instance
   spotifyPlayer = null;
+  player = null; // Direct reference to Spotify.Player
 
-  // Player state using Svelte 5 $state rune
-  state = $state({
-    // Playback state
-    isPlaying: false,
-    isPaused: true,
-
-    // Current track info
-    currentTrack: null,
-
-    // Playback position
-    position: 0,
-    duration: 0,
-
-    // Volume (0.0 to 1.0)
-    volume: 1.0,
-
-    // Device info
-    deviceId: null,
-
-    // Player status
-    isReady: false,
-    isInitializing: false,
-
-    // Error handling
-    error: null,
-
-    // Queue info
-    nextTracks: [],
-    previousTracks: []
-  });
-
-  // Derived states using $derived
-  progress = $derived.by(() => {
-    if (this.state.duration === 0) return 0;
-    return (this.state.position / this.state.duration) * 100;
-  });
-
-  hasNextTrack = $derived.by(() => {
-    return this.state.nextTracks && this.state.nextTracks.length > 0;
-  });
-
-  hasPreviousTrack = $derived.by(() => {
-    return this.state.previousTracks && this.state.previousTracks.length > 0;
-  });
-
-  currentTrackInfo = $derived.by(() => {
-    if (!this.state.currentTrack) return null;
-
-    return {
-      name: this.state.currentTrack.name,
-      artists: this.state.currentTrack.artists.map(a => a.name).join(', '),
-      album: this.state.currentTrack.album.name,
-      albumArt: this.state.currentTrack.album.images[0]?.url,
-      duration: this.state.currentTrack.duration_ms,
-      uri: this.state.currentTrack.uri
-    };
-  });
+  // Expose stores
+  state = state;
+  progress = progress;
+  hasNextTrack = hasNextTrack;
+  hasPreviousTrack = hasPreviousTrack;
+  currentTrackInfo = currentTrackInfo;
 
   /**
    * Initialize the Spotify Player
@@ -76,8 +85,7 @@ class PlayerStore {
     }
 
     try {
-      this.state.isInitializing = true;
-      this.state.error = null;
+      state.update(s => ({ ...s, isInitializing: true, error: null }));
 
       // Create new player instance
       this.spotifyPlayer = new SpotifyPlayer();
@@ -87,10 +95,14 @@ class PlayerStore {
 
       // Initialize player
       const deviceId = await this.spotifyPlayer.initialize();
+      this.player = this.spotifyPlayer.player; // Store reference
 
-      this.state.deviceId = deviceId;
-      this.state.isReady = true;
-      this.state.isInitializing = false;
+      state.update(s => ({
+        ...s,
+        deviceId,
+        isReady: true,
+        isInitializing: false
+      }));
 
       console.log('Player store initialized with device ID:', deviceId);
 
@@ -98,8 +110,11 @@ class PlayerStore {
       await this.transferPlayback(false);
     } catch (error) {
       console.error('Failed to initialize player store:', error);
-      this.state.error = error.message;
-      this.state.isInitializing = false;
+      state.update(s => ({
+        ...s,
+        error: error.message,
+        isInitializing: false
+      }));
       throw error;
     }
   }
@@ -112,44 +127,59 @@ class PlayerStore {
 
     // State changes
     this.spotifyPlayer.on('state_changed', (playerState) => {
-      this.state.isPaused = playerState.paused;
-      this.state.isPlaying = !playerState.paused;
-      this.state.position = playerState.position;
-      this.state.duration = playerState.duration;
-      this.state.currentTrack = playerState.track;
-      this.state.nextTracks = playerState.nextTracks || [];
-      this.state.previousTracks = playerState.previousTracks || [];
-
-      if (playerState.volume !== undefined) {
-        this.state.volume = playerState.volume;
-      }
+      state.update(s => ({
+        ...s,
+        isPaused: playerState.paused,
+        isPlaying: !playerState.paused,
+        position: playerState.position,
+        duration: playerState.duration,
+        currentTrack: playerState.track,
+        nextTracks: playerState.nextTracks || [],
+        previousTracks: playerState.previousTracks || [],
+        volume: playerState.volume !== undefined ? playerState.volume : s.volume
+      }));
     });
 
     // Ready event
     this.spotifyPlayer.on('ready', ({ device_id }) => {
-      this.state.deviceId = device_id;
-      this.state.isReady = true;
+      state.update(s => ({
+        ...s,
+        deviceId: device_id,
+        isReady: true
+      }));
       console.log('Player ready event received in store');
     });
 
     // Not ready event
     this.spotifyPlayer.on('not_ready', () => {
-      this.state.isReady = false;
+      state.update(s => ({
+        ...s,
+        isReady: false
+      }));
       console.log('Player not ready event received in store');
     });
 
     // Error events
     this.spotifyPlayer.on('auth_error', ({ message }) => {
-      this.state.error = `Authentication error: ${message}`;
+      state.update(s => ({
+        ...s,
+        error: `Authentication error: ${message}`
+      }));
     });
 
     this.spotifyPlayer.on('playback_error', ({ message }) => {
-      this.state.error = `Playback error: ${message}`;
+      state.update(s => ({
+        ...s,
+        error: `Playback error: ${message}`
+      }));
     });
 
     // Volume change
     this.spotifyPlayer.on('volume_changed', ({ volume }) => {
-      this.state.volume = volume;
+      state.update(s => ({
+        ...s,
+        volume
+      }));
     });
   }
 
@@ -167,7 +197,7 @@ class PlayerStore {
       await this.spotifyPlayer.transferPlayback(play);
     } catch (error) {
       console.error('Failed to transfer playback:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -183,10 +213,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.play();
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to play:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -202,10 +232,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.pause();
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to pause:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -221,10 +251,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.togglePlay();
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to toggle play:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -240,10 +270,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.nextTrack();
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to skip to next track:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -259,10 +289,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.previousTrack();
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to skip to previous track:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -279,10 +309,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.setVolume(volume);
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to set volume:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -299,10 +329,10 @@ class PlayerStore {
 
     try {
       await this.spotifyPlayer.seek(positionMs);
-      this.state.error = null;
+      state.update(s => ({ ...s, error: null }));
     } catch (error) {
       console.error('Failed to seek:', error);
-      this.state.error = error.message;
+      state.update(s => ({ ...s, error: error.message }));
       throw error;
     }
   }
@@ -312,7 +342,9 @@ class PlayerStore {
    * @returns {string|null}
    */
   getDeviceId() {
-    return this.state.deviceId;
+    let deviceId = null;
+    state.subscribe(s => deviceId = s.deviceId)();
+    return deviceId;
   }
 
   /**
@@ -323,18 +355,23 @@ class PlayerStore {
     if (this.spotifyPlayer) {
       await this.spotifyPlayer.disconnect();
       this.spotifyPlayer = null;
+      this.player = null;
 
       // Reset state
-      this.state.isPlaying = false;
-      this.state.isPaused = true;
-      this.state.currentTrack = null;
-      this.state.position = 0;
-      this.state.duration = 0;
-      this.state.deviceId = null;
-      this.state.isReady = false;
-      this.state.error = null;
-      this.state.nextTracks = [];
-      this.state.previousTracks = [];
+      state.set({
+        isPlaying: false,
+        isPaused: true,
+        currentTrack: null,
+        position: 0,
+        duration: 0,
+        volume: 1.0,
+        deviceId: null,
+        isReady: false,
+        isInitializing: false,
+        error: null,
+        nextTracks: [],
+        previousTracks: []
+      });
     }
   }
 
@@ -342,7 +379,7 @@ class PlayerStore {
    * Clear error
    */
   clearError() {
-    this.state.error = null;
+    state.update(s => ({ ...s, error: null }));
   }
 }
 
