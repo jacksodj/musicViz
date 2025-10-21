@@ -42,6 +42,135 @@ export class MilkdropPlugin extends CanvasPlugin {
     this.originalGetContextFn = null;
     this.glContext = null;
     this.usingWebGL1 = false;
+
+    // Synthetic audio graph (keeps Milkdrop alive without real audio)
+    this.syntheticGainNode = null;
+    this.syntheticOutputGain = null;
+    this.syntheticSources = null;
+    this.syntheticNoise = null;
+    this.syntheticAudioConnected = false;
+    this.lastSyntheticUpdate = 0;
+  }
+
+  /**
+   * Lazily create a beat-synced synthetic audio graph so presets have
+   * spectrum energy even when no real audio stream exists yet.
+   */
+  setupSyntheticAudio() {
+    if (!this.audioContext || this.syntheticGainNode) {
+      return;
+    }
+
+    this.syntheticGainNode = this.audioContext.createGain();
+    this.syntheticGainNode.gain.value = 0.8;
+
+    // Keep the graph running but mute audible output
+    this.syntheticOutputGain = this.audioContext.createGain();
+    this.syntheticOutputGain.gain.value = 0;
+    this.syntheticGainNode.connect(this.syntheticOutputGain);
+    this.syntheticOutputGain.connect(this.audioContext.destination);
+
+    const makeOscillator = (type, baseFrequency) => {
+      const osc = this.audioContext.createOscillator();
+      osc.type = type;
+      osc.frequency.value = baseFrequency;
+
+      const gain = this.audioContext.createGain();
+      gain.gain.value = 0;
+
+      osc.connect(gain);
+      gain.connect(this.syntheticGainNode);
+      osc.start();
+
+      return { osc, gain, baseFrequency };
+    };
+
+    this.syntheticSources = {
+      bass: makeOscillator('sine', 55),
+      mid: makeOscillator('triangle', 220),
+      high: makeOscillator('sawtooth', 880)
+    };
+
+    // Wide-band noise keeps treble energy lively
+    const noiseBuffer = this.audioContext.createBuffer(
+      1,
+      this.audioContext.sampleRate,
+      this.audioContext.sampleRate
+    );
+    const channel = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < channel.length; i++) {
+      channel[i] = Math.random() * 2 - 1;
+    }
+
+    const noiseSource = this.audioContext.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
+    noiseSource.loop = true;
+
+    const noiseGain = this.audioContext.createGain();
+    noiseGain.gain.value = 0;
+
+    noiseSource.connect(noiseGain);
+    noiseGain.connect(this.syntheticGainNode);
+    noiseSource.start();
+
+    this.syntheticNoise = { source: noiseSource, gain: noiseGain };
+  }
+
+  /**
+   * Smoothly modulate synthetic sources from timing/BPM data.
+   * @param {UnifiedPluginData} data
+   */
+  updateSyntheticAudio(data) {
+    if (!this.audioContext || !this.syntheticGainNode || !this.syntheticSources) {
+      return;
+    }
+
+    const { music = {}, playback = {}, timing = {} } = data || {};
+    const bpm = Math.max(20, music.bpm || 120);
+    const isPlaying = playback.isPlaying ?? true;
+    const timestamp = timing.timestamp ?? performance.now();
+
+    const beatIntervalMs = (60 / bpm) * 1000;
+    const beatPhase = beatIntervalMs > 0 ? (timestamp % beatIntervalMs) / beatIntervalMs : 0;
+    const beatPulse = Math.max(0, 1 - beatPhase * 2);
+    const easedPulse = beatPulse * beatPulse;
+
+    const barIntervalMs = beatIntervalMs * 4;
+    const barPhase = barIntervalMs > 0 ? (timestamp % barIntervalMs) / barIntervalMs : 0;
+
+    const now = this.audioContext.currentTime;
+    const ramp = 0.05;
+
+    const bassTarget = isPlaying ? 0.75 * easedPulse : 0;
+    const midTarget = isPlaying ? 0.35 * Math.abs(Math.sin(Math.PI * 2 * beatPhase)) : 0;
+    const highTarget = isPlaying ? 0.18 * (0.3 + Math.abs(Math.sin(Math.PI * 6 * barPhase))) : 0;
+    const noiseTarget = isPlaying ? 0.08 + 0.12 * easedPulse : 0;
+
+    this.syntheticSources.bass.gain.gain.setTargetAtTime(bassTarget, now, ramp);
+    this.syntheticSources.mid.gain.gain.setTargetAtTime(midTarget, now, ramp);
+    this.syntheticSources.high.gain.gain.setTargetAtTime(highTarget, now, ramp);
+
+    if (this.syntheticNoise?.gain) {
+      this.syntheticNoise.gain.gain.setTargetAtTime(noiseTarget, now, ramp);
+    }
+
+    this.syntheticSources.bass.osc.frequency.setTargetAtTime(
+      this.syntheticSources.bass.baseFrequency * (1 + 0.04 * beatPulse),
+      now,
+      ramp
+    );
+    this.syntheticSources.mid.osc.frequency.setTargetAtTime(
+      this.syntheticSources.mid.baseFrequency * (1 + 0.08 * Math.sin(Math.PI * 2 * barPhase)),
+      now,
+      ramp
+    );
+    this.syntheticSources.high.osc.frequency.setTargetAtTime(
+      this.syntheticSources.high.baseFrequency * (1 + 0.1 * Math.sin(timestamp / 350)),
+      now,
+      ramp
+    );
+
+    this.lastSyntheticUpdate = timestamp;
   }
 
   /**
@@ -175,11 +304,8 @@ export class MilkdropPlugin extends CanvasPlugin {
         });
       }
 
-      // Create analyser node for butterchurn
-      this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 2048;
-      this.bufferLength = this.analyser.frequencyBinCount;
-      this.dataArray = new Uint8Array(this.bufferLength);
+      // Ensure synthetic audio graph exists before wiring into Butterchurn
+      this.setupSyntheticAudio();
 
       // Create butterchurn visualizer with LOGICAL pixels (CSS dimensions)
       // Butterchurn will multiply by pixelRatio internally to get physical dimensions
@@ -204,9 +330,17 @@ export class MilkdropPlugin extends CanvasPlugin {
       console.log('[MilkdropPlugin] Visualizer type:', typeof this.visualizer);
       console.log('[MilkdropPlugin] Visualizer has render:', typeof this.visualizer.render);
 
-      // Connect analyser (even though we may not have actual audio source)
-      // Butterchurn needs the analyser to exist
-      this.analyser.connect(this.audioContext.destination);
+      if (this.visualizer && this.syntheticGainNode && !this.syntheticAudioConnected) {
+        try {
+          this.visualizer.connectAudio(this.syntheticGainNode);
+          this.syntheticAudioConnected = true;
+          console.log('[MilkdropPlugin] Connected synthetic audio graph to Butterchurn');
+        } catch (error) {
+          console.warn('[MilkdropPlugin] Failed to connect synthetic audio source to Butterchurn:', error);
+        }
+      } else if (!this.syntheticGainNode) {
+        console.warn('[MilkdropPlugin] Synthetic audio graph missing – Milkdrop may appear static');
+      }
 
       // Load preset
       if (this.presetData) {
@@ -227,9 +361,14 @@ export class MilkdropPlugin extends CanvasPlugin {
     // Store data
     this.data = data;
 
+    // Drive synthetic audio regardless of real playback availability
+    this.updateSyntheticAudio(data);
+
     // Track playing state to control animation
     const wasPlaying = this.isPlaying;
-    this.isPlaying = data.playback.isPlaying;
+    const playbackState = data?.playback ?? {};
+    const nextPlayingState = playbackState.isPlaying;
+    this.isPlaying = nextPlayingState ?? true;
 
     // Log state changes
     if (wasPlaying !== this.isPlaying) {
@@ -239,10 +378,6 @@ export class MilkdropPlugin extends CanvasPlugin {
         if (this.isPlaying && this.audioContext.state === 'suspended') {
           this.audioContext.resume().catch(err => {
             console.warn('[MilkdropPlugin] Failed to resume AudioContext on play:', err);
-          });
-        } else if (!this.isPlaying && this.audioContext.state === 'running') {
-          this.audioContext.suspend().catch(err => {
-            console.warn('[MilkdropPlugin] Failed to suspend AudioContext on pause:', err);
           });
         }
       }
@@ -258,7 +393,9 @@ export class MilkdropPlugin extends CanvasPlugin {
       return;
     }
 
-    if (!this.isPlaying && this.renderCount > 0) {
+    const syntheticActive = !!this.syntheticSources;
+
+    if (!syntheticActive && !this.isPlaying && this.renderCount > 0) {
       // Skip rendering while paused after the first frame to freeze the visual
       return;
     }
@@ -408,6 +545,67 @@ export class MilkdropPlugin extends CanvasPlugin {
       }
       this.analyser = null;
     }
+
+    if (this.syntheticSources) {
+      for (const source of Object.values(this.syntheticSources)) {
+        try {
+          source.osc.stop();
+        } catch (error) {
+          // Oscillator already stopped
+        }
+        try {
+          source.osc.disconnect();
+        } catch (error) {
+          // Ignore
+        }
+        try {
+          source.gain.disconnect();
+        } catch (error) {
+          // Ignore
+        }
+      }
+      this.syntheticSources = null;
+    }
+
+    if (this.syntheticNoise) {
+      try {
+        this.syntheticNoise.source.stop();
+      } catch (error) {
+        // Already stopped
+      }
+      try {
+        this.syntheticNoise.source.disconnect();
+      } catch (error) {
+        // Ignore
+      }
+      try {
+        this.syntheticNoise.gain.disconnect();
+      } catch (error) {
+        // Ignore
+      }
+      this.syntheticNoise = null;
+    }
+
+    if (this.syntheticGainNode) {
+      try {
+        this.syntheticGainNode.disconnect();
+      } catch (error) {
+        // Ignore
+      }
+      this.syntheticGainNode = null;
+    }
+
+    if (this.syntheticOutputGain) {
+      try {
+        this.syntheticOutputGain.disconnect();
+      } catch (error) {
+        // Ignore
+      }
+      this.syntheticOutputGain = null;
+    }
+
+    this.syntheticAudioConnected = false;
+    this.lastSyntheticUpdate = 0;
 
     // Note: We don't close audioContext as it might be shared
     // or needed by other parts of the app
