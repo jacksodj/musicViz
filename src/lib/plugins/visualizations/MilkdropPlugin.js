@@ -234,6 +234,18 @@ export class MilkdropPlugin extends CanvasPlugin {
     // Log state changes
     if (wasPlaying !== this.isPlaying) {
       console.log(`[MilkdropPlugin] Playing state changed:`, this.isPlaying);
+
+      if (this.audioContext) {
+        if (this.isPlaying && this.audioContext.state === 'suspended') {
+          this.audioContext.resume().catch(err => {
+            console.warn('[MilkdropPlugin] Failed to resume AudioContext on play:', err);
+          });
+        } else if (!this.isPlaying && this.audioContext.state === 'running') {
+          this.audioContext.suspend().catch(err => {
+            console.warn('[MilkdropPlugin] Failed to suspend AudioContext on pause:', err);
+          });
+        }
+      }
     }
   }
 
@@ -243,6 +255,11 @@ export class MilkdropPlugin extends CanvasPlugin {
   render() {
     if (!this.visualizer) {
       console.warn('[MilkdropPlugin] No visualizer in render()');
+      return;
+    }
+
+    if (!this.isPlaying && this.renderCount > 0) {
+      // Skip rendering while paused after the first frame to freeze the visual
       return;
     }
 
