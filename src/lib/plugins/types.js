@@ -251,15 +251,10 @@ export class CanvasPlugin extends IVisualizationPlugin {
    */
   initialize(context) {
     this.canvas = context.canvas;  // Store canvas element
-    this.ctx = context.ctx;        // Store initial context (may become stale)
+    this.ctx = context.ctx || null;        // Store provided context (may be null)
     this.width = context.width || 0;
     this.height = context.height || 0;
     this.dpr = context.dpr || 1;
-
-    // Get fresh context if canvas is available but ctx is not
-    if (this.canvas && !this.ctx && !this.canvas.id?.startsWith('milkdrop-')) {
-      this.ctx = this.canvas.getContext('2d');
-    }
   }
 
   /**
@@ -269,10 +264,41 @@ export class CanvasPlugin extends IVisualizationPlugin {
   getContext() {
     // Always get fresh context from canvas if available
     if (this.canvas) {
+      // Debug canvas state
+      console.log('[CanvasPlugin.getContext] Canvas state:', {
+        hasClass: this.canvas.classList.contains('plugin-canvas'),
+        className: this.canvas.className,
+        width: this.canvas.width,
+        height: this.canvas.height,
+        inDOM: document.body.contains(this.canvas),
+        parent: this.canvas.parentElement?.className
+      });
+
+      // Make sure this canvas is the plugin canvas, not from iframe
+      if (!this.canvas.classList.contains('plugin-canvas')) {
+        console.error('[CanvasPlugin] ERROR: Canvas does not have plugin-canvas class!', {
+          actualClass: this.canvas.className,
+          id: this.canvas.id
+        });
+
+        // Try to find the correct canvas
+        const correctCanvas = document.querySelector('canvas.plugin-canvas');
+        if (correctCanvas && correctCanvas !== this.canvas) {
+          console.log('[CanvasPlugin] Found correct canvas with plugin-canvas class, switching...');
+          this.canvas = correctCanvas;
+        } else {
+          return null;
+        }
+      }
+
       const freshCtx = this.canvas.getContext('2d');
       if (freshCtx) {
         this.ctx = freshCtx;
+      } else {
+        console.error('[CanvasPlugin] Failed to get 2D context from canvas!');
       }
+    } else {
+      console.error('[CanvasPlugin] No canvas element available!');
     }
     return this.ctx;
   }

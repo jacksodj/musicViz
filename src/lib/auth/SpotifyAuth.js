@@ -212,6 +212,11 @@ export class SpotifyAuth {
   async getStoredToken() {
     try {
       const token = await invoke('get_spotify_token');
+
+      if (!token || !token.access_token) {
+        return null;
+      }
+
       return token;
     } catch (error) {
       console.error('Failed to get stored token:', error);
@@ -225,7 +230,37 @@ export class SpotifyAuth {
    */
   async isAuthenticated() {
     try {
-      return await invoke('is_authenticated');
+      let tokenData = await this.getStoredToken();
+
+      if (!tokenData) {
+        return false;
+      }
+
+      const now = Date.now() / 1000; // seconds
+      const expiresAt = tokenData.expires_at || 0;
+      const refreshThreshold = 60; // seconds before expiry to refresh proactively
+
+      const isExpired = expiresAt > 0 && now >= expiresAt;
+      const needsRefresh = expiresAt > 0 && now >= (expiresAt - refreshThreshold);
+
+      if ((isExpired || needsRefresh) && tokenData.refresh_token) {
+        try {
+          console.log('[SpotifyAuth] Access token expired/expiring, attempting refresh');
+          await this.refreshToken(tokenData.refresh_token);
+          tokenData = await this.getStoredToken();
+          return !!tokenData;
+        } catch (refreshError) {
+          console.error('[SpotifyAuth] Failed to refresh token during auth check:', refreshError);
+          return false;
+        }
+      }
+
+      if (isExpired && !tokenData.refresh_token) {
+        console.warn('[SpotifyAuth] Access token expired and no refresh token available');
+        return false;
+      }
+
+      return true;
     } catch (error) {
       console.error('Failed to check authentication:', error);
       return false;

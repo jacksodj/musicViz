@@ -231,36 +231,109 @@ export class WaveformPlugin extends CanvasPlugin {
     const waveformData = new Uint8Array(fftSize);
 
     if (!isPlaying) {
+      // Return silent data when not playing
+      frequencyData.fill(0);
+      waveformData.fill(128); // Center line for waveform
       return { frequencyData, waveformData };
     }
 
-    // Generate beat-synced data
+    // Generate more realistic beat-synced data
     const beatInterval = (60 / bpm) * 1000; // ms per beat
     const beatProgress = (timestamp % beatInterval) / beatInterval;
-    const beatEnergy = Math.max(0, 1 - beatProgress * 2); // Quick decay
 
-    // Waveform data (time domain)
-    const waveFreq = 0.05; // Wave frequency
-    for (let i = 0; i < fftSize; i++) {
-      const t = (timestamp / 1000 + i / fftSize) * waveFreq;
+    // Create different beat patterns
+    const measureProgress = (timestamp % (beatInterval * 4)) / (beatInterval * 4);
+    const isKick = beatProgress < 0.1; // Kick drum on beat
+    const isSnare = (beatProgress > 0.45 && beatProgress < 0.55); // Snare on off-beat
 
-      // Mix multiple frequencies for more interesting waveform
-      const wave1 = Math.sin(t * Math.PI * 2);
-      const wave2 = Math.sin(t * Math.PI * 2 * 2.5) * 0.3;
-      const wave3 = Math.sin(t * Math.PI * 2 * 0.5) * 0.2;
+    // Energy envelope with more realistic ADSR
+    const attack = 0.05;
+    const decay = 0.15;
+    const sustain = 0.7;
+    const release = 0.3;
 
-      const combined = (wave1 + wave2 + wave3) * (0.5 + beatEnergy * 0.5);
-      waveformData[i] = Math.floor((combined * 0.8 + 0.5) * 255);
+    let beatEnergy;
+    if (beatProgress < attack) {
+      beatEnergy = beatProgress / attack;
+    } else if (beatProgress < attack + decay) {
+      beatEnergy = 1 - ((beatProgress - attack) / decay) * (1 - sustain);
+    } else if (beatProgress < 1 - release) {
+      beatEnergy = sustain;
+    } else {
+      beatEnergy = sustain * ((1 - beatProgress) / release);
     }
 
-    // Frequency data (optional, for compatibility)
+    // Add some variation to make it more interesting
+    const variation = Math.sin(timestamp / 2000) * 0.3 + 0.7;
+    beatEnergy *= variation;
+
+    // More realistic waveform data (time domain)
+    for (let i = 0; i < fftSize; i++) {
+      const t = i / fftSize;
+
+      // Mix multiple frequencies for complex waveform
+      const fundamental = Math.sin(t * Math.PI * 2 * 4) * beatEnergy;
+      const harmonic1 = Math.sin(t * Math.PI * 2 * 8) * beatEnergy * 0.5;
+      const harmonic2 = Math.sin(t * Math.PI * 2 * 12) * beatEnergy * 0.25;
+      const noise = (Math.random() - 0.5) * 0.1;
+
+      // Add kick transient
+      let transient = 0;
+      if (isKick && t < 0.05) {
+        transient = Math.sin(t * Math.PI * 2 * 60) * (1 - t / 0.05) * 0.5;
+      }
+
+      // Add snare hit
+      if (isSnare && t < 0.1) {
+        transient += (Math.random() - 0.5) * (1 - t / 0.1) * 0.4;
+      }
+
+      // Combine and add some envelope shaping
+      const wave = (fundamental + harmonic1 + harmonic2 + noise + transient) * 0.8;
+
+      // Convert to 0-255 range with center at 128
+      waveformData[i] = Math.floor(Math.max(0, Math.min(255, (wave + 1) * 127.5)));
+    }
+
+    // Frequency data with more realistic spectrum
     for (let i = 0; i < bufferLength; i++) {
       const freq = i / bufferLength;
-      if (freq < 0.2) {
-        frequencyData[i] = Math.floor(beatEnergy * 200 + Math.random() * 20);
-      } else {
-        frequencyData[i] = Math.floor(100 * (1 - freq) + Math.random() * 30);
+      let value = 0;
+
+      // Sub-bass (0-0.05) - strong on kick
+      if (freq < 0.05 && isKick) {
+        value = 200 + Math.random() * 55;
       }
+      // Bass (0.05-0.15) - pulse with beat
+      else if (freq < 0.15) {
+        const bassEnergy = beatEnergy * 0.9 + 0.1;
+        value = bassEnergy * 180 * (1 - (freq - 0.05) / 0.1) + Math.random() * 30;
+      }
+      // Low-mid (0.15-0.3) - snare frequencies
+      else if (freq < 0.3) {
+        const snareEnergy = isSnare ? 0.8 : 0.3;
+        value = (100 * snareEnergy + beatEnergy * 60) * (1 - (freq - 0.15) / 0.15) + Math.random() * 40;
+      }
+      // Mid (0.3-0.5) - melodic content
+      else if (freq < 0.5) {
+        // Simulate some harmonic content
+        const harmonic = Math.sin(freq * 20 + timestamp / 500) * 30;
+        value = (80 + harmonic) * (1 - (freq - 0.3) / 0.2) * variation + Math.random() * 30;
+      }
+      // High-mid (0.5-0.7) - presence
+      else if (freq < 0.7) {
+        value = 60 * (1 - (freq - 0.5) / 0.2) * variation + Math.random() * 35;
+      }
+      // High (0.7-1.0) - air/sparkle
+      else {
+        value = 40 * (1 - freq) + Math.random() * 30;
+      }
+
+      // Apply overall energy modulation
+      value *= (0.7 + measureProgress * 0.3);
+
+      // Clamp to valid range
+      frequencyData[i] = Math.floor(Math.max(0, Math.min(255, value)));
     }
 
     return { frequencyData, waveformData };

@@ -9,6 +9,7 @@
   import { analysisStore, hasAnalysis, beats, analysisError } from '$lib/stores/analysisStore.js';
   import { spotifyAnalysisService } from '$lib/services/SpotifyAnalysisService.js';
   import { initializePluginSystem, pluginRegistry } from '$lib/plugins/index.js';
+  import { testKeyring } from '$lib/utils/testKeyring.js';
 
   let playerInitialized = $state(false);
   let initializingPlayer = $state(false);
@@ -161,6 +162,10 @@
   });
 
   onMount(async () => {
+    // Make test function available globally
+    window.testKeyring = testKeyring;
+    console.log('[+page] Keyring test available. Run: testKeyring()');
+
     // Check for existing authentication (persisted tokens)
     console.log('[+page] Checking for existing authentication...');
     const hasExistingAuth = await checkExistingAuth();

@@ -38,6 +38,10 @@ export class MilkdropPlugin extends CanvasPlugin {
     this.canvas = null;
     this.isPlaying = false;
     this.renderCount = 0;
+    this.webglUnavailable = false;
+    this.originalGetContextFn = null;
+    this.glContext = null;
+    this.usingWebGL1 = false;
   }
 
   /**
@@ -47,6 +51,11 @@ export class MilkdropPlugin extends CanvasPlugin {
     console.log('[MilkdropPlugin] initialize() called with context:', context);
     super.initialize(context);
     this.canvas = context.canvas;
+
+    if (this.webglUnavailable) {
+      console.warn('[MilkdropPlugin] Skipping initialization because WebGL is unavailable');
+      return;
+    }
 
     console.log('[MilkdropPlugin] After super.initialize(), this.width:', this.width, 'this.height:', this.height);
 
@@ -66,6 +75,88 @@ export class MilkdropPlugin extends CanvasPlugin {
       if (this.canvas) {
         this.canvas.width = this.width;
         this.canvas.height = this.height;
+      }
+
+      // Ensure WebGL context is obtainable before handing control to Butterchurn
+      if (this.canvas) {
+        const contextAttributes = {
+          alpha: false,
+          antialias: true,
+          depth: false,
+          stencil: false,
+          preserveDrawingBuffer: false,
+          premultipliedAlpha: false,
+          powerPreference: 'high-performance'
+        };
+
+        if (!this.originalGetContextFn) {
+          this.originalGetContextFn = this.canvas.getContext;
+        }
+
+        const getContextBound = (type, attrs) => this.originalGetContextFn.call(this.canvas, type, attrs);
+
+        const attributeCandidates = [
+          contextAttributes,
+          { ...contextAttributes, antialias: false },
+          { alpha: true, antialias: true, depth: false, stencil: false, preserveDrawingBuffer: false },
+          undefined
+        ];
+
+        let testGl = null;
+        let usedAttrs = null;
+
+        for (const attrs of attributeCandidates) {
+          testGl = getContextBound('webgl2', attrs) || getContextBound('experimental-webgl2', attrs);
+          if (testGl) {
+            usedAttrs = attrs;
+            break;
+          }
+        }
+
+        if (!testGl) {
+          for (const attrs of attributeCandidates) {
+            testGl = getContextBound('webgl', attrs) || getContextBound('experimental-webgl', attrs);
+            if (testGl) {
+              usedAttrs = attrs;
+              this.usingWebGL1 = true;
+              console.warn('[MilkdropPlugin] Falling back to WebGL1 context for Milkdrop preset');
+              break;
+            }
+          }
+        }
+
+        if (!testGl) {
+          console.error('[MilkdropPlugin] WebGL context unavailable – Milkdrop visualizations require WebGL support.');
+          this.webglUnavailable = true;
+          return;
+        }
+
+        console.log('[MilkdropPlugin] Obtained WebGL context. Antialias:', usedAttrs?.antialias, 'Preserve buffer:', usedAttrs?.preserveDrawingBuffer, 'Using WebGL1:', this.usingWebGL1);
+        console.log('[MilkdropPlugin] Context prototype:', Object.getPrototypeOf(testGl)?.constructor?.name);
+        window.__milkdropGlContext = testGl;
+
+        if (typeof testGl.getExtension === 'function') {
+          testGl.getExtension('OES_standard_derivatives');
+        }
+
+        this.glContext = testGl;
+
+        const pluginRef = this;
+        Object.defineProperty(this.canvas, 'getContext', {
+          configurable: true,
+          value(type, attrs) {
+            if (!type) {
+              return getContextBound(type, attrs);
+            }
+
+            const normalized = String(type).toLowerCase();
+            if (normalized === 'webgl2' || normalized === 'experimental-webgl2' || normalized === 'webgl' || normalized === 'experimental-webgl') {
+              return pluginRef.glContext;
+            }
+
+            return getContextBound(type, attrs);
+          }
+        });
       }
 
       // Create audio context if needed
@@ -93,21 +184,19 @@ export class MilkdropPlugin extends CanvasPlugin {
       // Create butterchurn visualizer with LOGICAL pixels (CSS dimensions)
       // Butterchurn will multiply by pixelRatio internally to get physical dimensions
       const rect = this.canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
 
       console.log('[MilkdropPlugin] Creating visualizer with rect:', rect);
       console.log('[MilkdropPlugin] Canvas physical dimensions:', this.canvas.width, 'x', this.canvas.height);
-      console.log('[MilkdropPlugin] Device pixel ratio:', dpr);
-      console.log('[MilkdropPlugin] Will pass logical dimensions:', Math.floor(rect.width), 'x', Math.floor(rect.height));
+      console.log('[MilkdropPlugin] Using renderer size:', this.width, 'x', this.height);
       console.log('[MilkdropPlugin] AudioContext state after setup:', this.audioContext.state);
 
       this.visualizer = butterchurn.createVisualizer(
         this.audioContext,
         this.canvas,
         {
-          width: Math.floor(rect.width),   // Logical pixels - Butterchurn will scale by pixelRatio
-          height: Math.floor(rect.height),  // Logical pixels - Butterchurn will scale by pixelRatio
-          pixelRatio: dpr,
+          width: this.width,
+          height: this.height,
+          pixelRatio: 1,
           textureRatio: 1
         }
       );
@@ -214,6 +303,11 @@ export class MilkdropPlugin extends CanvasPlugin {
     console.log('[MilkdropPlugin] resize() called:', width, 'x', height, 'dpr:', dpr);
     console.log('[MilkdropPlugin] Current visualizer state:', !!this.visualizer);
 
+    if (this.webglUnavailable) {
+      console.warn('[MilkdropPlugin] Resize skipped – WebGL unavailable');
+      return;
+    }
+
     super.resize(width, height, dpr);
 
     // If visualizer wasn't created due to zero dimensions, try to initialize now
@@ -240,9 +334,7 @@ export class MilkdropPlugin extends CanvasPlugin {
       console.log('[MilkdropPlugin] Visualizer exists, calling setRendererSize');
       try {
         // Pass logical dimensions to setRendererSize (it will scale by DPR internally)
-        const logicalWidth = width / (dpr || 1);
-        const logicalHeight = height / (dpr || 1);
-        this.visualizer.setRendererSize(logicalWidth, logicalHeight, dpr || 1);
+        this.visualizer.setRendererSize(width, height, 1);
       } catch (error) {
         console.warn('[MilkdropPlugin] Resize error:', error);
       }
@@ -268,6 +360,28 @@ export class MilkdropPlugin extends CanvasPlugin {
       }
       this.visualizer = null;
     }
+
+    if (!this.webglUnavailable && this.canvas && this.glContext) {
+      try {
+        const loseExt = this.glContext.getExtension && this.glContext.getExtension('WEBGL_lose_context');
+        if (loseExt) {
+          loseExt.loseContext();
+        }
+      } catch (error) {
+        console.warn('[MilkdropPlugin] Failed to release WebGL context:', error);
+      }
+    }
+
+    if (this.originalGetContextFn && this.canvas) {
+      Object.defineProperty(this.canvas, 'getContext', {
+        configurable: true,
+        value: this.originalGetContextFn
+      });
+      this.originalGetContextFn = null;
+    }
+
+    this.glContext = null;
+    this.usingWebGL1 = false;
 
     if (this.analyser) {
       try {

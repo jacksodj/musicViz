@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { SpotifyAuth } from '$lib/auth/SpotifyAuth.js';
   import {
     authStatus,
@@ -11,6 +12,7 @@
     setAuthError,
     setAuthenticating,
     resetAuth,
+    checkExistingAuth,
   } from '$lib/stores/authStore.js';
 
   let spotifyAuth;
@@ -19,21 +21,19 @@
   onMount(async () => {
     spotifyAuth = new SpotifyAuth();
 
-    // Check if already authenticated
-    const isAuth = await spotifyAuth.isAuthenticated();
+    const currentStatus = get(authStatus);
 
-    if (isAuth) {
+    if (currentStatus !== 'authenticated') {
       try {
-        // Get stored token and user info
-        const token = await spotifyAuth.getStoredToken();
-        const user = await spotifyAuth.getCurrentUser();
-
-        setAuthenticated(user, token.access_token);
-        console.log('User already authenticated:', user.display_name);
+        const restored = await checkExistingAuth();
+        if (restored) {
+          console.log('[SpotifyConnect] Restored authentication from persisted session');
+        }
       } catch (error) {
-        console.error('Failed to load user data:', error);
-        resetAuth();
+        console.error('[SpotifyConnect] Failed to restore authentication:', error);
       }
+    } else {
+      console.log('[SpotifyConnect] Authentication already active');
     }
 
     checkingAuth = false;

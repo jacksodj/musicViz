@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { playerState, playerProgress } from '$lib/stores/playerStore.js';
   import { analysisStore } from '$lib/stores/analysisStore.js';
   import { pluginRegistry } from '$lib/plugins/PluginRegistry.js';
@@ -36,6 +36,7 @@
   let loadedPluginId = $state(null);
   let loadedPresetId = $state(null);
   let canvasKey = $state(0); // Force canvas recreation when this changes
+  let loadRequestCounter = 0;
 
   // Effect to load plugin when pluginId or presetId changes
   $effect(() => {
@@ -43,20 +44,36 @@
     if (presetId && presetId !== loadedPresetId) {
       loadedPresetId = presetId;
       loadedPluginId = null;
-      loadPluginFromPreset(presetId);
+      void loadPluginFromPreset(presetId);
     } else if (pluginId && pluginId !== loadedPluginId && !presetId) {
       loadedPluginId = pluginId;
       loadedPresetId = null;
-      loadPlugin(pluginId);
+      void loadPlugin(pluginId);
     }
   });
+
+  async function waitForCanvasReady(attempts = 10, delayMs = 30) {
+    for (let i = 0; i < attempts; i++) {
+      await tick();
+
+      if (canvasEl && canvasEl instanceof HTMLCanvasElement) {
+        if (document.body.contains(canvasEl)) {
+          return true;
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    return false;
+  }
 
   /**
    * Load plugin by ID
    */
-  function loadPlugin(id) {
+  async function loadPlugin(id) {
+    const requestId = ++loadRequestCounter;
     try {
-      // Clean up existing plugin
       cleanupPlugin();
 
       if (!id) {
@@ -66,107 +83,103 @@
 
       console.log(`[PluginManager] Loading plugin: ${id}`);
 
-    // Get context based on plugin type
-    const PluginClass = pluginRegistry.get(id);
-    if (!PluginClass) {
-      console.error(`[PluginManager] Plugin '${id}' not found`);
-      return;
-    }
-
-    // Create temp instance to check type
-    const tempInstance = new PluginClass();
-    const pluginType = tempInstance.metadata.type;
-
-    // Create appropriate context
-    let context = {};
-    if (pluginType === 'canvas') {
-      // Wait for canvas to be mounted
-      if (!canvasEl) {
-        console.warn('[PluginManager] Canvas not yet mounted, will retry');
-        setTimeout(() => loadPlugin(id), 100);
+      const PluginClass = pluginRegistry.get(id);
+      if (!PluginClass) {
+        console.error(`[PluginManager] Plugin '${id}' not found`);
         return;
       }
 
-      console.log('[PluginManager] Canvas state before plugin load:');
-      console.log('  - Canvas element:', canvasEl);
-      console.log('  - Canvas in DOM:', document.body.contains(canvasEl));
-      console.log('  - Canvas display:', window.getComputedStyle(canvasEl).display);
-      console.log('  - Canvas visibility:', window.getComputedStyle(canvasEl).visibility);
-      console.log('  - Canvas opacity:', window.getComputedStyle(canvasEl).opacity);
+      const tempInstance = new PluginClass();
+      const pluginType = tempInstance.metadata.type;
 
-      const rect = canvasEl.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      let context = {};
 
-      console.log('  - BoundingClientRect:', rect.width, 'x', rect.height);
-      console.log('  - Device Pixel Ratio:', dpr);
+      if (pluginType === 'canvas') {
+        const canvasReady = await waitForCanvasReady();
 
-      // For Milkdrop plugins, don't get 2D context (they need WebGL)
-      // Check if this is a Milkdrop plugin by ID
-      const isMilkdrop = id.startsWith('milkdrop-');
-
-      context = {
-        canvas: canvasEl, // Always pass canvas element
-        width: rect.width * dpr,
-        height: rect.height * dpr,
-        dpr
-      };
-
-      // Only get 2D context for non-Milkdrop plugins
-      // NOTE: This context may become stale when canvas is recreated
-      if (!isMilkdrop) {
-        const ctx = canvasEl.getContext('2d');
-        console.log('  - 2D Context acquired:', !!ctx);
-        if (ctx) {
-          console.log('  - Context canvas:', ctx.canvas === canvasEl);
-
-          // Test drawing to verify canvas is working
-          try {
-            ctx.fillStyle = '#FF0000';
-            ctx.fillRect(10, 10, 50, 50);
-            console.log('  - Test drawing successful (red square at 10,10)');
-            // Clear the test drawing
-            setTimeout(() => {
-              ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-              console.log('  - Test drawing cleared');
-            }, 100);
-          } catch (error) {
-            console.error('  - Test drawing failed:', error);
-          }
+        if (requestId !== loadRequestCounter) {
+          console.log('[PluginManager] Canvas wait aborted by newer load request');
+          return;
         }
-        context.ctx = ctx;
-      } else {
-        console.log('  - Skipping 2D context for Milkdrop plugin');
+
+        if (!canvasReady || !canvasEl) {
+          console.error('[PluginManager] Canvas element not ready for plugin load');
+          return;
+        }
+
+        if (!canvasEl.classList.contains('plugin-canvas')) {
+          console.error('[PluginManager] Canvas missing plugin-canvas class! Classes:', canvasEl.className);
+        }
+
+        const rect = canvasEl.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const isMilkdrop = id.startsWith('milkdrop-');
+        const containerRect = containerEl?.getBoundingClientRect();
+        const width = Math.max(rect.width || containerRect?.width || canvasEl.width || 0, 1);
+        const height = Math.max(rect.height || containerRect?.height || canvasEl.height || 0, 1);
+
+        context = {
+          canvas: canvasEl,
+          width: width * dpr,
+          height: height * dpr,
+          dpr
+        };
+
+        if (!isMilkdrop) {
+          const ctx = canvasEl.getContext('2d');
+          if (!ctx) {
+            console.error('[PluginManager] Failed to acquire 2D context for canvas plugin');
+            return;
+          }
+          context.ctx = ctx;
+        }
+      } else if (pluginType === 'component') {
+        context = {
+          container: containerEl
+        };
       }
-    } else if (pluginType === 'component') {
-      context = {
-        container: containerEl
-      };
-    }
 
-    // Create plugin instance
-    plugin = pluginRegistry.createInstance(id, context);
+      if (requestId !== loadRequestCounter) {
+        console.log('[PluginManager] Plugin load aborted before instantiation');
+        return;
+      }
 
-    if (!plugin) {
-      console.error(`[PluginManager] Failed to create plugin instance: ${id}`);
-      return;
-    }
+      plugin = pluginRegistry.createInstance(id, context);
 
-    // For component plugins, set up component rendering
-    if (pluginType === 'component') {
-      componentInstance = plugin.getComponent();
-      componentProps = plugin.getProps();
-    }
+      if (!plugin) {
+        console.error(`[PluginManager] Failed to create plugin instance: ${id}`);
+        return;
+      }
 
-    // Ensure canvas is properly sized before starting animation
-    if (plugin.metadata.type === 'canvas') {
-      console.log('[PluginManager] Calling handleResize() after plugin creation');
-      handleResize();
-    }
+      if (pluginType === 'component') {
+        componentInstance = plugin.getComponent();
+        componentProps = plugin.getProps();
+      }
 
-    // Start animation loop
-    startAnimationLoop();
+      if (plugin.metadata.type === 'canvas') {
+        handleResize();
 
-      // Callback
+        if (!canvasEl || !document.body.contains(canvasEl)) {
+          console.warn('[PluginManager] Canvas not in DOM yet; waiting before animation start');
+
+          const readyAfterResize = await waitForCanvasReady();
+
+          if (requestId !== loadRequestCounter) {
+            console.log('[PluginManager] Plugin load aborted during post-resize wait');
+            return;
+          }
+
+          if (!readyAfterResize) {
+            console.error('[PluginManager] Canvas never became available for animation');
+            return;
+          }
+
+          handleResize();
+        }
+      }
+
+      startAnimationLoop();
+
       if (onPluginChange) {
         onPluginChange(plugin);
       }
@@ -174,7 +187,6 @@
       console.log(`[PluginManager] Plugin loaded: ${plugin.metadata.name}`);
     } catch (error) {
       console.error('[PluginManager] Failed to load plugin:', error);
-      // Don't let plugin errors break the entire app
       plugin = null;
     }
   }
@@ -182,9 +194,7 @@
   /**
    * Load plugin from preset
    */
-  function loadPluginFromPreset(id) {
-    cleanupPlugin();
-
+  async function loadPluginFromPreset(id) {
     if (!id) {
       console.warn('[PluginManager] No preset ID provided');
       return;
@@ -198,10 +208,8 @@
       return;
     }
 
-    // Load the plugin first
-    loadPlugin(preset.pluginId);
+    await loadPlugin(preset.pluginId);
 
-    // Apply preset config
     if (plugin && preset.config) {
       plugin.setConfig(preset.config);
     }
@@ -324,6 +332,34 @@
     // This runs whenever canvasEl changes (including when canvas is recreated)
     if (canvasEl) {
       console.log('[PluginManager] Setting up resize observer for canvas');
+
+      // IMPORTANT: Set canvas dimensions immediately to container size
+      const rect = containerEl?.getBoundingClientRect();
+      if (rect && rect.width > 0 && rect.height > 0) {
+        const dpr = window.devicePixelRatio || 1;
+        canvasEl.width = rect.width * dpr;
+        canvasEl.height = rect.height * dpr;
+        console.log('[PluginManager] Set canvas dimensions:', canvasEl.width, 'x', canvasEl.height);
+
+        // Force style dimensions too
+        canvasEl.style.width = rect.width + 'px';
+        canvasEl.style.height = rect.height + 'px';
+      } else {
+        console.warn('[PluginManager] Container has no dimensions yet, will retry...');
+        // Retry after a short delay
+        setTimeout(() => {
+          const retryRect = containerEl?.getBoundingClientRect();
+          if (retryRect && retryRect.width > 0 && retryRect.height > 0) {
+            const dpr = window.devicePixelRatio || 1;
+            canvasEl.width = retryRect.width * dpr;
+            canvasEl.height = retryRect.height * dpr;
+            canvasEl.style.width = retryRect.width + 'px';
+            canvasEl.style.height = retryRect.height + 'px';
+            console.log('[PluginManager] Retry: Set canvas dimensions:', canvasEl.width, 'x', canvasEl.height);
+            handleResize();
+          }
+        }, 100);
+      }
 
       // Initial resize
       handleResize();

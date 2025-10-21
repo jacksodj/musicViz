@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Keyring Test</title>
+</head>
+<body>
+    <h1>Keyring Test Page</h1>
+    <button onclick="runTest()">Test Keyring</button>
+    <button onclick="checkAuth()">Check Auth Status</button>
+    <button onclick="getToken()">Get Stored Token</button>
+    <button onclick="logout()">Logout (Clear Tokens)</button>
+    <div id="output" style="white-space: pre-wrap; font-family: monospace; margin-top: 20px; padding: 10px; background: #f0f0f0;"></div>
+
+    <script type="module">
+        import { invoke } from '@tauri-apps/api/core';
+
+        const output = document.getElementById('output');
+
+        function log(msg) {
+            output.textContent += msg + '\n';
+            console.log(msg);
+        }
+
+        window.runTest = async function() {
+            output.textContent = '';
+            log('=== Running Keyring Test ===');
+            try {
+                const result = await invoke('test_keyring');
+                log('SUCCESS: ' + result);
+            } catch (error) {
+                log('ERROR: ' + error);
+            }
+        };
+
+        window.checkAuth = async function() {
+            output.textContent = '';
+            log('=== Checking Authentication Status ===');
+            try {
+                const isAuth = await invoke('is_authenticated');
+                log('Is authenticated: ' + isAuth);
+
+                if (isAuth) {
+                    const token = await invoke('get_spotify_token');
+                    if (token) {
+                        log('Token found in keyring!');
+                        log('  - Has access token: ' + !!token.access_token);
+                        log('  - Has refresh token: ' + !!token.refresh_token);
+                        log('  - Expires at: ' + new Date(token.expires_at * 1000).toLocaleString());
+                    } else {
+                        log('Token expired or not found');
+                    }
+                }
+            } catch (error) {
+                log('ERROR: ' + error);
+            }
+        };
+
+        window.getToken = async function() {
+            output.textContent = '';
+            log('=== Getting Stored Token ===');
+            try {
+                const token = await invoke('get_spotify_token');
+                if (token) {
+                    log('Token retrieved from keyring:');
+                    log(JSON.stringify(token, null, 2));
+                } else {
+                    log('No valid token found');
+                }
+            } catch (error) {
+                log('ERROR: ' + error);
+            }
+        };
+
+        window.logout = async function() {
+            output.textContent = '';
+            log('=== Logging Out ===');
+            try {
+                await invoke('logout');
+                log('Successfully logged out and cleared tokens');
+            } catch (error) {
+                log('ERROR: ' + error);
+            }
+        };
+
+        // Auto-check on load
+        setTimeout(checkAuth, 100);
+    </script>
+</body>
+</html>

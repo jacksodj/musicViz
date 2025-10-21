@@ -87,49 +87,56 @@ export async function checkExistingAuth() {
   try {
     const spotifyAuth = new SpotifyAuth();
 
-    // Check if we have stored tokens
-    const isAuth = await spotifyAuth.isAuthenticated();
-    if (!isAuth) {
-      console.log('[authStore] No valid authentication found');
-      return false;
-    }
-
-    // Get the stored token
-    const tokenData = await spotifyAuth.getStoredToken();
+    // Load stored token (may trigger on-demand hydration from backend)
+    let tokenData = await spotifyAuth.getStoredToken();
     if (!tokenData) {
       console.log('[authStore] No stored token found');
       return false;
     }
 
-    // Check if token is expired
-    const now = Date.now() / 1000; // Convert to seconds
-    if (tokenData.expires_at && now >= tokenData.expires_at) {
-      console.log('[authStore] Token expired, attempting refresh...');
+    const now = Date.now() / 1000; // seconds
+    const expiresAt = tokenData.expires_at || 0;
+    const refreshThreshold = 60; // seconds before expiry to refresh proactively
 
-      // Try to refresh the token
-      if (tokenData.refresh_token) {
-        try {
-          const refreshedData = await spotifyAuth.refreshToken(tokenData.refresh_token);
-          tokenData.access_token = refreshedData.access_token;
-          console.log('[authStore] Token refreshed successfully');
-        } catch (refreshError) {
-          console.error('[authStore] Failed to refresh token:', refreshError);
+    const isExpired = expiresAt > 0 && now >= expiresAt;
+    const needsRefresh = expiresAt > 0 && now >= (expiresAt - refreshThreshold);
+
+    if ((isExpired || needsRefresh) && tokenData.refresh_token) {
+      try {
+        console.log('[authStore] Access token expired/expiring, refreshing...');
+        await spotifyAuth.refreshToken(tokenData.refresh_token);
+        tokenData = await spotifyAuth.getStoredToken();
+
+        if (!tokenData) {
+          console.error('[authStore] Failed to load token after refresh');
           resetAuth();
           return false;
         }
-      } else {
-        console.log('[authStore] No refresh token available');
+      } catch (refreshError) {
+        console.error('[authStore] Failed to refresh token:', refreshError);
         resetAuth();
         return false;
       }
+    } else if (isExpired && !tokenData.refresh_token) {
+      console.log('[authStore] Token expired and no refresh token available');
+      resetAuth();
+      return false;
     }
 
     // Get user profile to verify token is valid
     try {
       const user = await spotifyAuth.getCurrentUser();
 
+      // Always read latest token after potential refresh inside getCurrentUser
+      const latestToken = await spotifyAuth.getStoredToken();
+      if (!latestToken) {
+        console.warn('[authStore] Lost token after fetching user profile');
+        resetAuth();
+        return false;
+      }
+
       // Set authenticated state
-      setAuthenticated(user, tokenData.access_token);
+      setAuthenticated(user, latestToken.access_token);
       console.log('[authStore] Restored authentication for user:', user.display_name || user.id);
       return true;
     } catch (error) {
@@ -140,7 +147,15 @@ export async function checkExistingAuth() {
         try {
           const refreshedData = await spotifyAuth.refreshToken(tokenData.refresh_token);
           const user = await spotifyAuth.getCurrentUser();
-          setAuthenticated(user, refreshedData.access_token);
+          const latestToken = await spotifyAuth.getStoredToken();
+
+          if (!latestToken) {
+            console.warn('[authStore] No token available after refresh attempt');
+            resetAuth();
+            return false;
+          }
+
+          setAuthenticated(user, latestToken.access_token || refreshedData.access_token);
           console.log('[authStore] Restored authentication after refresh for user:', user.display_name || user.id);
           return true;
         } catch (refreshError) {

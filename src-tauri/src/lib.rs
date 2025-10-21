@@ -53,6 +53,7 @@ pub fn run() {
             spotify_auth::is_authenticated,
             spotify_auth::logout,
             spotify_auth::open_url,
+            spotify_auth::test_keyring,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
