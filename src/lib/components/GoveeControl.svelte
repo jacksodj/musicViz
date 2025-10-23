@@ -19,7 +19,19 @@
   let extractionMode = $state('zones');
   let stats = $state({});
 
+  // Auto-settings
+  let autoDiscoverOnStartup = $state(false);
+  let autoSyncWithMusic = $state(false);
+
+  // Fade-out behavior
+  let isVisible = $state(true);
+  let inactivityTimer = null;
+  let lastInteractionTime = $state(Date.now());
+
   onMount(async () => {
+    // Load settings from localStorage
+    loadSettings();
+
     // Initialize Govee manager with API key from environment
     goveeManager = new GoveeManager({
       apiKey: import.meta.env.VITE_GOVEE_API_KEY,
@@ -36,14 +48,53 @@
     });
 
     // Load cached devices if any
-    loadCachedDevices();
+    await loadCachedDevices();
+
+    // Auto-discover if enabled
+    if (autoDiscoverOnStartup && devices.length === 0) {
+      console.log('[GoveeControl] Auto-discovering devices on startup');
+      await discoverDevices();
+    }
+
+    // Setup global interaction listeners for fade-out behavior
+    const handleInteraction = () => {
+      lastInteractionTime = Date.now();
+      isVisible = true;
+      resetInactivityTimer();
+    };
+
+    window.addEventListener('mousemove', handleInteraction);
+    window.addEventListener('mousedown', handleInteraction);
+    window.addEventListener('keydown', handleInteraction);
+
+    resetInactivityTimer();
+
+    return () => {
+      window.removeEventListener('mousemove', handleInteraction);
+      window.removeEventListener('mousedown', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+    };
   });
 
   onDestroy(() => {
     if (goveeManager) {
       goveeManager.destroy();
     }
+    if (inactivityTimer) clearTimeout(inactivityTimer);
   });
+
+  function resetInactivityTimer() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+
+    // Don't hide if panel is open
+    if (showPanel) return;
+
+    // Hide after 3 seconds of inactivity
+    inactivityTimer = setTimeout(() => {
+      isVisible = false;
+    }, 3000);
+  }
 
   async function discoverDevices() {
     isDiscovering = true;
@@ -75,6 +126,37 @@
       }
     } catch (error) {
       console.error('[GoveeControl] Failed to load cached devices:', error);
+    }
+  }
+
+  function loadSettings() {
+    try {
+      const saved = localStorage.getItem('goveeSettings');
+      if (saved) {
+        const settings = JSON.parse(saved);
+        autoDiscoverOnStartup = settings.autoDiscoverOnStartup ?? false;
+        autoSyncWithMusic = settings.autoSyncWithMusic ?? false;
+        extractionMode = settings.extractionMode ?? 'zones';
+        latencyCompensation = settings.latencyCompensation ?? 50;
+        console.log('[GoveeControl] Loaded settings:', settings);
+      }
+    } catch (error) {
+      console.error('[GoveeControl] Failed to load settings:', error);
+    }
+  }
+
+  function saveSettings() {
+    try {
+      const settings = {
+        autoDiscoverOnStartup,
+        autoSyncWithMusic,
+        extractionMode,
+        latencyCompensation
+      };
+      localStorage.setItem('goveeSettings', JSON.stringify(settings));
+      console.log('[GoveeControl] Saved settings');
+    } catch (error) {
+      console.error('[GoveeControl] Failed to save settings:', error);
     }
   }
 
@@ -175,9 +257,71 @@
       goveeManager.latencyCompensation = latencyCompensation;
     }
   });
+
+  // Watch for canvas changes and restart sync if needed
+  $effect(() => {
+    if (syncEnabled && canvas && goveeManager) {
+      console.log('[GoveeControl] Canvas changed, restarting sync after delay');
+      goveeManager.stopSync();
+
+      // Wait for new visualizer to initialize and render first frame
+      const timeout = setTimeout(() => {
+        if (syncEnabled && canvas && goveeManager) {
+          console.log('[GoveeControl] Restarting sync with new canvas');
+          goveeManager.startSync(canvas, {
+            extractionMode,
+            latencyCompensation
+          });
+        }
+      }, 500); // 500ms delay to let visualizer initialize
+
+      // Cleanup timeout if effect re-runs
+      return () => clearTimeout(timeout);
+    }
+  });
+
+  // Auto-sync with music playback
+  $effect(() => {
+    if (!autoSyncWithMusic || !goveeManager || !canvas || devices.length === 0) return;
+
+    if (isPlaying && !syncEnabled) {
+      console.log('[GoveeControl] Auto-starting sync (music playing)');
+      goveeManager.startSync(canvas, {
+        extractionMode,
+        latencyCompensation
+      });
+      syncEnabled = true;
+    } else if (!isPlaying && syncEnabled) {
+      console.log('[GoveeControl] Auto-stopping sync (music paused)');
+      goveeManager.stopSync();
+      syncEnabled = false;
+    }
+  });
+
+  // Save settings when they change
+  $effect(() => {
+    // Track all settings
+    autoDiscoverOnStartup;
+    autoSyncWithMusic;
+    extractionMode;
+    latencyCompensation;
+
+    // Save to localStorage
+    saveSettings();
+  });
+
+  // Keep visible while panel is open, restart timer when panel closes
+  $effect(() => {
+    if (showPanel) {
+      isVisible = true;
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+    } else {
+      resetInactivityTimer();
+    }
+  });
 </script>
 
-<div class="govee-control">
+<div class="govee-control" class:hidden={!isVisible}>
   <button
     class="govee-toggle"
     onclick={() => showPanel = !showPanel}
@@ -269,6 +413,26 @@
               </label>
             </div>
 
+            <div class="control-row checkbox-row">
+              <label>
+                <input
+                  type="checkbox"
+                  bind:checked={autoDiscoverOnStartup}
+                />
+                Auto-discover on startup
+              </label>
+            </div>
+
+            <div class="control-row checkbox-row">
+              <label>
+                <input
+                  type="checkbox"
+                  bind:checked={autoSyncWithMusic}
+                />
+                Auto-sync with music
+              </label>
+            </div>
+
             <div class="button-row">
               <button class="btn-small" onclick={turnAllOn}>All On</button>
               <button class="btn-small" onclick={turnAllOff}>All Off</button>
@@ -341,9 +505,16 @@
 <style>
   .govee-control {
     position: fixed;
-    top: 1rem;
-    left: 1rem;
+    top: 5rem;
+    right: 1rem;
     z-index: 1000;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+  }
+
+  .govee-control.hidden {
+    opacity: 0;
+    pointer-events: none;
   }
 
   .govee-toggle {
@@ -394,8 +565,8 @@
 
   .govee-panel {
     position: fixed;
-    top: 5rem;
-    left: 1rem;
+    top: 9rem;
+    right: 1rem;
     width: 320px;
     max-height: 80vh;
     background: rgba(0, 0, 0, 0.95);
@@ -411,13 +582,13 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem;
+    padding: 0.8rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .panel-header h3 {
     margin: 0;
-    font-size: 1.2rem;
+    font-size: 1.1rem;
   }
 
   .close-btn {
@@ -435,7 +606,7 @@
   }
 
   .panel-content {
-    padding: 1rem;
+    padding: 0.8rem;
     overflow-y: auto;
   }
 
@@ -477,7 +648,7 @@
 
   .btn-sync {
     width: 100%;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
   }
 
   .btn-sync.active {
@@ -494,7 +665,7 @@
   }
 
   .sync-control {
-    margin-bottom: 1rem;
+    margin-bottom: 0.8rem;
   }
 
   .sync-stats {
@@ -502,17 +673,17 @@
     justify-content: space-around;
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.6);
-    margin-top: 0.5rem;
+    margin-top: 0.4rem;
   }
 
   .global-controls {
-    margin-bottom: 1rem;
-    padding-bottom: 1rem;
+    margin-bottom: 0.8rem;
+    padding-bottom: 0.8rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .control-row {
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.6rem;
   }
 
   .control-row label {
@@ -542,6 +713,18 @@
     border-radius: 0.25rem;
   }
 
+  .checkbox-row label {
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .checkbox-row input[type="checkbox"] {
+    width: 1.1rem;
+    height: 1.1rem;
+    cursor: pointer;
+    margin-right: 0.5rem;
+  }
+
   .button-row {
     display: flex;
     gap: 0.5rem;
@@ -554,14 +737,14 @@
   .scene-controls {
     display: flex;
     gap: 0.5rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.8rem;
   }
 
   .scene-controls label {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
     font-size: 0.9rem;
   }
 
@@ -574,25 +757,25 @@
   }
 
   .device-list h4 {
-    margin: 0 0 0.75rem 0;
-    font-size: 1rem;
+    margin: 0 0 0.6rem 0;
+    font-size: 0.95rem;
   }
 
   .device-item {
     display: grid;
     grid-template-columns: 1fr auto auto;
-    gap: 0.5rem;
+    gap: 0.4rem;
     align-items: center;
-    padding: 0.5rem;
+    padding: 0.4rem;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 0.25rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
   }
 
   .device-info {
     display: flex;
     flex-direction: column;
-    gap: 0.125rem;
+    gap: 0.1rem;
   }
 
   .device-name {
@@ -643,6 +826,6 @@
 
   .btn-refresh {
     width: 100%;
-    margin-top: 1rem;
+    margin-top: 0.8rem;
   }
 </style>
