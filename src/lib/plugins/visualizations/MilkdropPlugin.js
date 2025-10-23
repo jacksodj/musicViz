@@ -213,7 +213,7 @@ export class MilkdropPlugin extends CanvasPlugin {
           antialias: true,
           depth: false,
           stencil: false,
-          preserveDrawingBuffer: false,
+          preserveDrawingBuffer: true,  // Enable for Govee color extraction
           premultipliedAlpha: false,
           powerPreference: 'high-performance'
         };
@@ -227,7 +227,7 @@ export class MilkdropPlugin extends CanvasPlugin {
         const attributeCandidates = [
           contextAttributes,
           { ...contextAttributes, antialias: false },
-          { alpha: true, antialias: true, depth: false, stencil: false, preserveDrawingBuffer: false },
+          { alpha: true, antialias: true, depth: false, stencil: false, preserveDrawingBuffer: true },
           undefined
         ];
 

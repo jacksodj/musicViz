@@ -4,6 +4,7 @@
   import SpotifyConnect from '$lib/components/SpotifyConnect.svelte';
   import PlayerControls from '$lib/components/PlayerControls.svelte';
   import PluginManager from '$lib/components/PluginManager.svelte';
+  import GoveeControl from '$lib/components/GoveeControl.svelte';
   import { isAuthenticated, checkExistingAuth } from '$lib/stores/authStore.js';
   import { playerStore, playerState } from '$lib/stores/playerStore.js';
   import { analysisStore, hasAnalysis, beats, analysisError } from '$lib/stores/analysisStore.js';
@@ -17,6 +18,7 @@
   let currentTrackId = $state(null);
   let currentPluginId = $state('beat-pulse');
   let availablePlugins = $state([]);
+  let visualizationCanvas = $state(null);
 
   // UI state
   let showMenu = $state(false);
@@ -214,8 +216,15 @@
           pluginId={currentPluginId}
           width="100%"
           height="100vh"
+          canvasRef={(canvas) => visualizationCanvas = canvas}
         />
       {/if}
+
+      <!-- Govee Light Control -->
+      <GoveeControl
+        canvas={visualizationCanvas}
+        isPlaying={$playerState.isPlaying}
+      />
 
       <!-- Overlay UI -->
       <div class="overlay-ui" class:controls-hidden={!showControls}>

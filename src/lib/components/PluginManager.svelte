@@ -12,7 +12,8 @@
     presetId = null,       // Preset ID to load (overrides pluginId)
     width = '100%',        // Container width
     height = '100vh',      // Container height
-    onPluginChange = null  // Callback when plugin changes
+    onPluginChange = null, // Callback when plugin changes
+    canvasRef = null       // Bindable canvas reference
   } = $props();
 
   // State
@@ -326,6 +327,13 @@
     // This prevents WebGL/2D context conflicts
     canvasKey++;
   }
+
+  // Expose canvas to parent when it changes
+  $effect(() => {
+    if (canvasRef && typeof canvasRef === 'function') {
+      canvasRef(canvasEl);
+    }
+  });
 
   // Effect to set up canvas resize observer whenever canvas changes
   $effect(() => {
