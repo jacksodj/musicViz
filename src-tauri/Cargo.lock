@@ -2050,7 +2050,9 @@ dependencies = [
 name = "musicviz"
 version = "0.1.0"
 dependencies = [
+ "jni",
  "keyring",
+ "ndk-context",
  "serde",
  "serde_json",
  "tauri",

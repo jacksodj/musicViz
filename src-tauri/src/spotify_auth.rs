@@ -446,7 +446,85 @@ pub fn logout(state: State<SpotifyAuthState>) -> Result<(), String> {
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     println!("Opening URL: {}", url);
-    webbrowser::open(&url).map_err(|e| e.to_string())
+
+    #[cfg(target_os = "android")]
+    {
+        use jni::objects::{JObject, JValue};
+
+        // On Android, use Intent to open browser
+        println!("Android detected, using Intent to open URL");
+
+        // Get JNI environment
+        let context = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {}", e))?;
+
+        // Create Intent
+        open_url_android(&mut env, &url, context.context().cast())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        webbrowser::open(&url).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(target_os = "android")]
+fn open_url_android(env: &mut jni::JNIEnv, url: &str, context_ptr: *mut std::ffi::c_void) -> Result<(), String> {
+    use jni::objects::{JObject, JValue};
+
+    let context = unsafe { JObject::from_raw(context_ptr as jni::sys::jobject) };
+
+    // Create Intent with ACTION_VIEW
+    let intent_class = env.find_class("android/content/Intent")
+        .map_err(|e| format!("Failed to find Intent class: {}", e))?;
+
+    let action_view = env.new_string("android.intent.action.VIEW")
+        .map_err(|e| format!("Failed to create action string: {}", e))?;
+
+    let url_jstring = env.new_string(url)
+        .map_err(|e| format!("Failed to create URL string: {}", e))?;
+
+    // Parse URI
+    let uri_class = env.find_class("android/net/Uri")
+        .map_err(|e| format!("Failed to find Uri class: {}", e))?;
+
+    let uri = env.call_static_method(
+        uri_class,
+        "parse",
+        "(Ljava/lang/String;)Landroid/net/Uri;",
+        &[JValue::Object(&url_jstring)]
+    ).map_err(|e| format!("Failed to parse URI: {}", e))?
+    .l().map_err(|e| format!("Failed to get URI object: {}", e))?;
+
+    // Create Intent(ACTION_VIEW, uri)
+    let intent = env.new_object(
+        intent_class,
+        "(Ljava/lang/String;Landroid/net/Uri;)V",
+        &[JValue::Object(&action_view), JValue::Object(&uri)]
+    ).map_err(|e| format!("Failed to create Intent: {}", e))?;
+
+    // Add FLAG_ACTIVITY_NEW_TASK
+    let flag_new_task = 0x10000000i32;
+    let _ = env.call_method(
+        &intent,
+        "addFlags",
+        "(I)Landroid/content/Intent;",
+        &[JValue::Int(flag_new_task)]
+    ).map_err(|e| format!("Failed to add flags: {}", e))?;
+
+    // Start activity
+    env.call_method(
+        context,
+        "startActivity",
+        "(Landroid/content/Intent;)V",
+        &[JValue::Object(&intent)]
+    ).map_err(|e| format!("Failed to start activity: {}", e))?;
+
+    println!("Successfully launched Intent for URL");
+    Ok(())
 }
 
 /// Test keyring operations

@@ -73,12 +73,17 @@
     try {
       setAuthenticating();
 
-      // Start OAuth flow
-      await spotifyAuth.startAuth();
+      // Start OAuth flow (returns auth code on Android, or waits for deep-link on desktop)
+      const code = await spotifyAuth.startAuth();
 
-      // Note: The actual token exchange will happen when we receive the callback
-      // For now, we'll manually trigger it for testing
-      console.log('Authorization window opened. Waiting for callback...');
+      if (code) {
+        console.log('[SpotifyConnect] Received authorization code, exchanging for token...');
+        // Exchange code for token
+        await handleCallback(code);
+      } else {
+        console.log('[SpotifyConnect] Authorization window opened. Waiting for callback...');
+        // On desktop, callback will be handled by deep-link listener
+      }
     } catch (error) {
       setAuthError(error.message);
     }

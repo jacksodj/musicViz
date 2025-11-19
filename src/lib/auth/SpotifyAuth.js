@@ -76,8 +76,47 @@ export class SpotifyAuth {
   }
 
   /**
+   * Start Device OAuth flow - for TV/devices without easy text input
+   * Shows QR code and waits for user to complete auth on phone
+   * @returns {Promise<{authUrl: string, userCode: string}>}
+   */
+  async startDeviceAuth() {
+    try {
+      // Generate PKCE challenge
+      const codeChallenge = await this.generateCodeChallenge();
+
+      // Use a web-based redirect that shows the code
+      const webRedirectUri = 'https://spotify-auth-display.github.io/callback';
+
+      // Build authorization URL
+      const params = new URLSearchParams({
+        client_id: this.clientId,
+        response_type: 'code',
+        redirect_uri: webRedirectUri,
+        scope: this.scopes.join(' '),
+        code_challenge_method: 'S256',
+        code_challenge: codeChallenge,
+        show_dialog: 'true',
+      });
+
+      const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
+
+      console.log('[DeviceAuth] Generated auth URL for QR code');
+
+      // Return URL for QR code display and wait for manual code entry
+      return {
+        authUrl,
+        message: 'Scan QR code with your phone to login'
+      };
+    } catch (error) {
+      console.error('Failed to start device auth:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Start OAuth flow - opens browser for user authorization
-   * @returns {Promise<void>}
+   * @returns {Promise<string>} Authorization code
    */
   async startAuth() {
     try {
@@ -99,15 +138,147 @@ export class SpotifyAuth {
 
       console.log('Opening authorization URL...');
 
-      // Open in system browser
-      await invoke('open_url', { url: authUrl });
+      // Try to detect if we're on Android
+      const isAndroid = navigator.userAgent.toLowerCase().includes('android');
 
-      // Note: Callback will be handled by Tauri deep link handler
-      // or by listening for redirect in the app
+      if (isAndroid) {
+        // On Android, show in-app OAuth modal
+        console.log('[Auth] Android detected, showing in-app OAuth');
+        return await this.showInAppOAuth(authUrl);
+      } else {
+        // On desktop, open in system browser
+        await invoke('open_url', { url: authUrl });
+        // Return promise that will be resolved by deep link handler
+        return new Promise((resolve, reject) => {
+          window._oauthResolve = resolve;
+          window._oauthReject = reject;
+        });
+      }
     } catch (error) {
       console.error('Failed to start auth:', error);
       throw error;
     }
+  }
+
+  /**
+   * Show in-app OAuth for Android by navigating current window
+   * @param {string} authUrl - Spotify authorization URL
+   * @returns {Promise<string>} Authorization code
+   */
+  async showInAppOAuth(authUrl) {
+    console.log('[Auth] Android OAuth: navigating to Spotify');
+
+    // Inject keyboard debugging script after page loads
+    this.injectKeyboardDebugger();
+
+    // Use Tauri's event system
+    const { listen } = await import('@tauri-apps/api/event');
+
+    return new Promise((resolve, reject) => {
+      let unlisten;
+
+      // Set up deep-link listener before navigating
+      listen('deep-link', (event) => {
+        console.log('[Auth] Deep-link received:', event);
+
+        const url = event.payload;
+        if (typeof url === 'string' && url.startsWith(this.redirectUri)) {
+          console.log('[Auth] OAuth redirect detected');
+
+          try {
+            const parsedUrl = new URL(url);
+            const code = parsedUrl.searchParams.get('code');
+
+            if (code) {
+              console.log('[Auth] Successfully captured OAuth code');
+              if (unlisten) unlisten();
+              resolve(code);
+            } else {
+              if (unlisten) unlisten();
+              reject(new Error('No code found in redirect URL'));
+            }
+          } catch (err) {
+            if (unlisten) unlisten();
+            reject(err);
+          }
+        }
+      }).then((unlistenFn) => {
+        unlisten = unlistenFn;
+      });
+
+      // Set timeout
+      setTimeout(() => {
+        if (unlisten) unlisten();
+        reject(new Error('OAuth timeout after 5 minutes'));
+      }, 300000);
+
+      // Navigate to Spotify OAuth page
+      console.log('[Auth] Navigating to:', authUrl);
+      window.location.href = authUrl;
+    });
+  }
+
+  /**
+   * Fallback: Show OAuth in a window.open popup
+   * @param {string} authUrl - Spotify authorization URL
+   * @returns {Promise<string>} Authorization code
+   */
+  async showPopupOAuth(authUrl) {
+    console.log('[Auth] Using window.open fallback for OAuth');
+
+    return new Promise((resolve, reject) => {
+      const popup = window.open(
+        authUrl,
+        'spotify-oauth',
+        'width=800,height=600,location=yes,toolbar=no,menubar=no'
+      );
+
+      if (!popup) {
+        reject(new Error('Failed to open OAuth popup'));
+        return;
+      }
+
+      // Check for redirect by polling the popup
+      const interval = setInterval(() => {
+        try {
+          if (popup.closed) {
+            clearInterval(interval);
+            reject(new Error('OAuth popup was closed'));
+            return;
+          }
+
+          // Try to access popup location
+          const popupUrl = popup.location.href;
+
+          if (popupUrl.startsWith(this.redirectUri)) {
+            clearInterval(interval);
+
+            const url = new URL(popupUrl);
+            const code = url.searchParams.get('code');
+
+            popup.close();
+
+            if (code) {
+              console.log('[Auth] Successfully captured OAuth code from popup');
+              resolve(code);
+            } else {
+              reject(new Error('No code found in redirect URL'));
+            }
+          }
+        } catch (e) {
+          // Cross-origin error is expected while on Spotify domain
+        }
+      }, 500);
+
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        clearInterval(interval);
+        if (!popup.closed) {
+          popup.close();
+          reject(new Error('OAuth timeout'));
+        }
+      }, 300000);
+    });
   }
 
   /**
@@ -265,6 +436,54 @@ export class SpotifyAuth {
       console.error('Failed to check authentication:', error);
       return false;
     }
+  }
+
+  /**
+   * Inject keyboard debugging script into page
+   * Logs all keyboard events to help diagnose Android TV keyboard issues
+   */
+  injectKeyboardDebugger() {
+    // Wait for page to load, then inject debugging
+    setTimeout(() => {
+      console.log('[KeyboardDebug] Injecting keyboard event listeners');
+
+      // Log all keyboard events on document
+      document.addEventListener('keydown', (e) => {
+        console.log(`[KeyboardDebug] keydown - key: "${e.key}", code: "${e.code}", keyCode: ${e.keyCode}, target: ${e.target.tagName}, type: ${e.target.type || 'none'}`);
+      }, true);
+
+      document.addEventListener('keypress', (e) => {
+        console.log(`[KeyboardDebug] keypress - key: "${e.key}", code: "${e.code}", char: "${String.fromCharCode(e.keyCode)}"`);
+      }, true);
+
+      document.addEventListener('keyup', (e) => {
+        console.log(`[KeyboardDebug] keyup - key: "${e.key}"`);
+      }, true);
+
+      document.addEventListener('input', (e) => {
+        console.log(`[KeyboardDebug] input event - target: ${e.target.tagName}, value: "${e.target.value}", inputType: ${e.inputType}`);
+      }, true);
+
+      // Log focus changes
+      document.addEventListener('focusin', (e) => {
+        console.log(`[KeyboardDebug] focusin - element: ${e.target.tagName}, id: ${e.target.id}, class: ${e.target.className}, type: ${e.target.type || 'none'}, inputmode: ${e.target.inputMode || 'none'}`);
+
+        // Log computed style and attributes
+        if (e.target.tagName === 'INPUT') {
+          console.log(`[KeyboardDebug] Input details - name: ${e.target.name}, autocomplete: ${e.target.autocomplete}, pattern: ${e.target.pattern}`);
+        }
+      }, true);
+
+      // Monitor active element changes
+      setInterval(() => {
+        const active = document.activeElement;
+        if (active && active.tagName === 'INPUT') {
+          console.log(`[KeyboardDebug] Active input - tag: ${active.tagName}, type: ${active.type}, value length: ${active.value?.length || 0}`);
+        }
+      }, 2000);
+
+      console.log('[KeyboardDebug] Keyboard debugger injected successfully');
+    }, 1000);
   }
 
   /**
