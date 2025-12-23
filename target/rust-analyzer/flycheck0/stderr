@@ -1,55 +1,17 @@
-   0.295891667s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: dependency on `build_script_build` is newer than we are 1763525583.557294092s > 1761186129.125646138s "/Users/dennisjackson/Code/musicViz/src-tauri"
-   0.296746292s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: fingerprint dirty for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: false }/TargetInner { ..: lib_target("musicviz_lib", ["staticlib", "cdylib", "rlib"], "/Users/dennisjackson/Code/musicViz/src-tauri/src/lib.rs", Edition2021) }
-   0.296813125s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "build_script_build", dep_mtime: FileTime { seconds: 1763525583, nanos: 557294092 }, max_mtime: FileTime { seconds: 1761186129, nanos: 125646138 } })
-   0.384454125s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: fingerprint error for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: true }/TargetInner { ..: lib_target("musicviz_lib", ["staticlib", "cdylib", "rlib"], "/Users/dennisjackson/Code/musicViz/src-tauri/src/lib.rs", Edition2021) }
-   0.384468167s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/.fingerprint/musicviz-a03bb37acadf551b/test-lib-musicviz_lib`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: std::backtrace::Backtrace::create
-   1: cargo_util::paths::read_bytes
-   2: cargo_util::paths::read
-   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   4: cargo::core::compiler::fingerprint::prepare_target
-   5: cargo::core::compiler::compile
-   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
-   7: cargo::ops::cargo_compile::compile_ws
-   8: cargo::ops::cargo_compile::compile_with_exec
-   9: cargo::ops::cargo_compile::compile
-  10: cargo::commands::check::exec
-  11: <cargo::cli::Exec>::exec
-  12: cargo::main
-  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
-  14: std::rt::lang_start::<()>::{closure#0}
-  15: std::rt::lang_start_internal
-  16: _main
-   0.390569417s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint: fingerprint dirty for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: false }/TargetInner { name: "musicviz", doc: true, ..: with_path("/Users/dennisjackson/Code/musicViz/src-tauri/src/main.rs", Edition2021) }
-   0.390580084s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "musicviz_lib" })
-   0.391659459s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint: fingerprint error for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: true }/TargetInner { name: "musicviz", doc: true, ..: with_path("/Users/dennisjackson/Code/musicViz/src-tauri/src/main.rs", Edition2021) }
-   0.391664625s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/.fingerprint/musicviz-c68fb3a656c88e28/test-bin-musicviz`
-
-Caused by:
-    No such file or directory (os error 2)
-
-Stack backtrace:
-   0: std::backtrace::Backtrace::create
-   1: cargo_util::paths::read_bytes
-   2: cargo_util::paths::read
-   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
-   4: cargo::core::compiler::fingerprint::prepare_target
-   5: cargo::core::compiler::compile
-   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
-   7: cargo::ops::cargo_compile::compile_ws
-   8: cargo::ops::cargo_compile::compile_with_exec
-   9: cargo::ops::cargo_compile::compile
-  10: cargo::commands::check::exec
-  11: <cargo::cli::Exec>::exec
-  12: cargo::main
-  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
-  14: std::rt::lang_start::<()>::{closure#0}
-  15: std::rt::lang_start_internal
-  16: _main
+    Blocking waiting for file lock on package cache
+   0.324993167s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: stale: changed "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/build/musicviz-fb537ee47c9f24ad/out/60410df1915de6de60b6fe1a9943fa70abee41d2a2d672c2258433c83f7458a3"
+   0.325011583s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:           (vs) "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/.fingerprint/musicviz-465ac8f81d4bbf4a/dep-lib-musicviz_lib"
+   0.325013792s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1763525907, nanos: 41669724 } < FileTime { seconds: 1763525907, nanos: 143991360 }
+   0.326141167s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: fingerprint dirty for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: false }/TargetInner { ..: lib_target("musicviz_lib", ["staticlib", "cdylib", "rlib"], "/Users/dennisjackson/Code/musicViz/src-tauri/src/lib.rs", Edition2021) }
+   0.326213292s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/.fingerprint/musicviz-465ac8f81d4bbf4a/dep-lib-musicviz_lib", reference_mtime: FileTime { seconds: 1763525907, nanos: 41669724 }, stale: "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/build/musicviz-fb537ee47c9f24ad/out/60410df1915de6de60b6fe1a9943fa70abee41d2a2d672c2258433c83f7458a3", stale_mtime: FileTime { seconds: 1763525907, nanos: 143991360 } }))
+   0.393508542s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: stale: changed "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/build/musicviz-fb537ee47c9f24ad/out/a9ae02eca9acb7b54f2563e4e99a92864895e19317c478d6952a38d29d117bc1"
+   0.393520917s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:           (vs) "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/.fingerprint/musicviz-d6dbcfff48de1a20/dep-test-lib-musicviz_lib"
+   0.393522833s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:                FileTime { seconds: 1763525907, nanos: 41621430 } < FileTime { seconds: 1763525907, nanos: 144384750 }
+   0.393912750s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint: fingerprint dirty for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: true }/TargetInner { ..: lib_target("musicviz_lib", ["staticlib", "cdylib", "rlib"], "/Users/dennisjackson/Code/musicViz/src-tauri/src/lib.rs", Edition2021) }
+   0.393945083s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz_lib"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleItem(ChangedFile { reference: "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/.fingerprint/musicviz-d6dbcfff48de1a20/dep-test-lib-musicviz_lib", reference_mtime: FileTime { seconds: 1763525907, nanos: 41621430 }, stale: "/Users/dennisjackson/Code/musicViz/src-tauri/target/debug/build/musicviz-fb537ee47c9f24ad/out/a9ae02eca9acb7b54f2563e4e99a92864895e19317c478d6952a38d29d117bc1", stale_mtime: FileTime { seconds: 1763525907, nanos: 144384750 } }))
+   0.396858083s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint: fingerprint dirty for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: false }/TargetInner { name: "musicviz", doc: true, ..: with_path("/Users/dennisjackson/Code/musicViz/src-tauri/src/main.rs", Edition2021) }
+   0.396876458s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "musicviz_lib" })
+   0.398934333s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint: fingerprint dirty for musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)/Check { test: true }/TargetInner { name: "musicviz", doc: true, ..: with_path("/Users/dennisjackson/Code/musicViz/src-tauri/src/main.rs", Edition2021) }
+   0.398947542s  INFO prepare_target{force=false package_id=musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri) target="musicviz"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "musicviz_lib" })
     Checking musicviz v0.1.0 (/Users/dennisjackson/Code/musicViz/src-tauri)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.19s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.95s

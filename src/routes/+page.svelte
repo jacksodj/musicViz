@@ -1,22 +1,30 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import SpotifyConnect from '$lib/components/SpotifyConnect.svelte';
-  import PlayerControls from '$lib/components/PlayerControls.svelte';
-  import PluginManager from '$lib/components/PluginManager.svelte';
-  import GoveeControl from '$lib/components/GoveeControl.svelte';
-  import { isAuthenticated, checkExistingAuth } from '$lib/stores/authStore.js';
-  import { playerStore, playerState } from '$lib/stores/playerStore.js';
-  import { analysisStore, hasAnalysis, beats, analysisError } from '$lib/stores/analysisStore.js';
-  import { spotifyAnalysisService } from '$lib/services/SpotifyAnalysisService.js';
-  import { initializePluginSystem, pluginRegistry } from '$lib/plugins/index.js';
-  import { testKeyring } from '$lib/utils/testKeyring.js';
+  import { onMount, onDestroy } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import SpotifyConnect from "$lib/components/SpotifyConnect.svelte";
+  import PlayerControls from "$lib/components/PlayerControls.svelte";
+  import PluginManager from "$lib/components/PluginManager.svelte";
+  import GoveeControl from "$lib/components/GoveeControl.svelte";
+  import { isAuthenticated, checkExistingAuth } from "$lib/stores/authStore.js";
+  import { playerStore, playerState } from "$lib/stores/playerStore.js";
+  import {
+    analysisStore,
+    hasAnalysis,
+    beats,
+    analysisError,
+  } from "$lib/stores/analysisStore.js";
+  import { spotifyAnalysisService } from "$lib/services/SpotifyAnalysisService.js";
+  import {
+    initializePluginSystem,
+    pluginRegistry,
+  } from "$lib/plugins/index.js";
+  import { testKeyring } from "$lib/utils/testKeyring.js";
 
   let playerInitialized = $state(false);
   let initializingPlayer = $state(false);
   let initError = $state(null);
   let currentTrackId = $state(null);
-  let currentPluginId = $state('beat-pulse');
+  let currentPluginId = $state("beat-pulse");
   let availablePlugins = $state([]);
   let visualizationCanvas = $state(null);
 
@@ -38,11 +46,13 @@
     const track = $playerState.currentTrack;
     const trackId = track?.id;
 
-    console.log('[+page] $effect running - $playerState.currentTrack:', track);
-    console.log('[+page] trackId:', trackId, 'currentTrackId:', currentTrackId);
+    console.log("[+page] $effect running - $playerState.currentTrack:", track);
+    console.log("[+page] trackId:", trackId, "currentTrackId:", currentTrackId);
 
     if (trackId && trackId !== currentTrackId) {
-      console.log(`[+page] Track changed: ${track.name} by ${track.artists[0]?.name}`);
+      console.log(
+        `[+page] Track changed: ${track.name} by ${track.artists[0]?.name}`,
+      );
       currentTrackId = trackId;
       fetchAnalysis(trackId);
 
@@ -58,12 +68,12 @@
     initError = null;
 
     try {
-      console.log('Initializing Spotify Web Playback SDK...');
+      console.log("Initializing Spotify Web Playback SDK...");
       await playerStore.initialize();
       playerInitialized = true;
-      console.log('Spotify player initialized successfully');
+      console.log("Spotify player initialized successfully");
     } catch (error) {
-      console.error('Failed to initialize player:', error);
+      console.error("Failed to initialize player:", error);
       initError = error.message;
     } finally {
       initializingPlayer = false;
@@ -78,27 +88,34 @@
       const accessToken = await playerStore.spotifyPlayer?.getAccessToken();
 
       if (!accessToken) {
-        console.warn('[+page] No access token available for analysis');
-        analysisStore.setError('No access token available');
+        console.warn("[+page] No access token available for analysis");
+        analysisStore.setError("No access token available");
         return;
       }
 
       // Fetch analysis
       console.log(`[+page] Fetching analysis for track ${trackId}`);
-      const analysis = await spotifyAnalysisService.getAnalysis(trackId, accessToken);
+      const analysis = await spotifyAnalysisService.getAnalysis(
+        trackId,
+        accessToken,
+      );
 
       // Store in analysis store
       analysisStore.setAnalysis(trackId, analysis);
 
-      console.log(`[+page] Analysis loaded - ${analysis.beats?.length} beats, ${analysis.segments?.length} segments`);
+      console.log(
+        `[+page] Analysis loaded - ${analysis.beats?.length} beats, ${analysis.segments?.length} segments`,
+      );
     } catch (error) {
-      console.error('[+page] Failed to fetch analysis:', error);
+      console.error("[+page] Failed to fetch analysis:", error);
 
       // More specific error messages
-      if (error.message.includes('Forbidden')) {
-        analysisStore.setError('Audio analysis not available (requires Spotify Premium)');
-      } else if (error.message.includes('Unauthorized')) {
-        analysisStore.setError('Token expired - please reconnect');
+      if (error.message.includes("Forbidden")) {
+        analysisStore.setError(
+          "Audio analysis not available (requires Spotify Premium)",
+        );
+      } else if (error.message.includes("Unauthorized")) {
+        analysisStore.setError("Token expired - please reconnect");
       } else {
         analysisStore.setError(error.message);
       }
@@ -107,12 +124,12 @@
 
   async function prefetchNextTracks(nextTracks) {
     try {
-      const tokenData = await invoke('get_spotify_token');
+      const tokenData = await invoke("get_spotify_token");
       const accessToken = tokenData.access_token;
 
       spotifyAnalysisService.prefetchQueue(nextTracks, accessToken);
     } catch (error) {
-      console.warn('[+page] Failed to prefetch next tracks:', error);
+      console.warn("[+page] Failed to prefetch next tracks:", error);
     }
   }
 
@@ -147,13 +164,88 @@
     }
   });
 
+  // Handle global key events for remote control
+  function handleKeyDown(e) {
+    // Back button (Escape or Backspace on some remotes)
+    if (e.key === "Escape" || e.key === "Backspace") {
+      if (showMenu) {
+        e.preventDefault();
+        showMenu = false;
+        // Return focus to hamburger button
+        setTimeout(() => {
+          const hamburger = document.querySelector(".hamburger-btn");
+          if (hamburger instanceof HTMLElement) hamburger.focus();
+        }, 100);
+      }
+      return;
+    }
+
+    // Menu navigation
+    if (showMenu) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const options = Array.from(document.querySelectorAll(".viz-option"));
+        if (options.length === 0) return;
+
+        const activeEl = document.activeElement;
+        const currentIndex = activeEl ? options.indexOf(activeEl) : -1;
+        let nextIndex;
+
+        if (e.key === "ArrowDown") {
+          nextIndex = currentIndex + 1;
+          if (nextIndex >= options.length) nextIndex = 0; // Loop to top
+        } else {
+          nextIndex = currentIndex - 1;
+          if (nextIndex < 0) nextIndex = options.length - 1; // Loop to bottom
+        }
+
+        const nextOption = options[nextIndex];
+        if (nextOption instanceof HTMLElement) {
+          nextOption.focus();
+          handleInteraction(); // Keep controls visible
+        }
+      }
+      return;
+    }
+
+    // Main interface navigation (Vertical)
+    if (e.key === "ArrowDown") {
+      // If focus is on hamburger button, move to play button
+      if (
+        document.activeElement &&
+        document.activeElement.classList.contains("hamburger-btn")
+      ) {
+        e.preventDefault();
+        const playBtn = document.getElementById("play-button");
+        if (playBtn) {
+          playBtn.focus();
+          handleInteraction();
+        }
+      }
+    } else if (e.key === "ArrowUp") {
+      // If focus is on play button (or any control button), move to hamburger
+      if (
+        document.activeElement &&
+        (document.activeElement.closest(".playback-controls") ||
+          document.activeElement.closest(".volume-control"))
+      ) {
+        e.preventDefault();
+        const hamburger = document.querySelector(".hamburger-btn");
+        if (hamburger instanceof HTMLElement) {
+          hamburger.focus();
+          handleInteraction();
+        }
+      }
+    }
+  }
+
   // Categorize plugins
   const categorizedPlugins = $derived.by(() => {
     const native = [];
     const milkdrop = [];
 
     for (const plugin of availablePlugins) {
-      if (plugin.id.startsWith('milkdrop-')) {
+      if (plugin.id.startsWith("milkdrop-")) {
         milkdrop.push(plugin);
       } else {
         native.push(plugin);
@@ -166,15 +258,15 @@
   onMount(async () => {
     // Make test function available globally
     window.testKeyring = testKeyring;
-    console.log('[+page] Keyring test available. Run: testKeyring()');
+    console.log("[+page] Keyring test available. Run: testKeyring()");
 
     // Check for existing authentication (persisted tokens)
-    console.log('[+page] Checking for existing authentication...');
+    console.log("[+page] Checking for existing authentication...");
     const hasExistingAuth = await checkExistingAuth();
     if (hasExistingAuth) {
-      console.log('[+page] Restored existing authentication');
+      console.log("[+page] Restored existing authentication");
     } else {
-      console.log('[+page] No existing authentication found');
+      console.log("[+page] No existing authentication found");
     }
 
     // Initialize plugin system
@@ -183,12 +275,14 @@
 
     // Listen for mouse movement to show controls
     const handleMouseMove = () => handleInteraction();
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('click', handleMouseMove);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("click", handleMouseMove);
 
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('click', handleMouseMove);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("click", handleMouseMove);
     };
   });
 
@@ -216,7 +310,7 @@
           pluginId={currentPluginId}
           width="100%"
           height="100vh"
-          canvasRef={(canvas) => visualizationCanvas = canvas}
+          canvasRef={(canvas) => (visualizationCanvas = canvas)}
         />
       {/if}
 
@@ -234,14 +328,26 @@
 
           <button
             class="hamburger-btn"
-            onclick={() => { showMenu = !showMenu; handleInteraction(); }}
+            onclick={() => {
+              showMenu = !showMenu;
+              handleInteraction();
+              if (showMenu) {
+                // Focus first item after render
+                setTimeout(() => {
+                  const firstOption = document.querySelector(".viz-option");
+                  if (firstOption instanceof HTMLElement) firstOption.focus();
+                }, 100);
+              }
+            }}
             aria-label="Menu"
           >
             <svg viewBox="0 0 24 24" fill="currentColor">
               {#if showMenu}
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                <path
+                  d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+                />
               {:else}
-                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
               {/if}
             </svg>
           </button>
@@ -338,6 +444,13 @@
 </main>
 
 <style>
+  :global(body) {
+    margin: 0;
+    padding: 0;
+    background-color: black;
+    overflow: hidden;
+    overscan-behavior: none;
+  }
   main {
     width: 100%;
     height: 100vh;
@@ -356,7 +469,7 @@
 
   /* Background for visualization layer */
   .app-container::before {
-    content: '';
+    content: "";
     position: absolute;
     top: 0;
     left: 0;
@@ -628,58 +741,6 @@
     font-size: 0.95rem;
   }
 
-  .info-card {
-    background: rgba(0, 0, 0, 0.85);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(29, 185, 84, 0.3);
-    border-radius: 20px;
-    padding: 2rem 2.5rem;
-    max-width: 400px;
-    text-align: center;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  }
-
-  .info-card h3 {
-    margin: 0 0 1rem 0;
-    font-size: 1.2rem;
-    color: #1db954;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-
-  .info-card .track-name {
-    margin: 0.5rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: white;
-  }
-
-  .info-card .artist-name {
-    margin: 0.25rem 0 1.5rem 0;
-    font-size: 1.1rem;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .info-card .analysis-status {
-    margin: 1rem 0 0 0;
-    padding: 0.75rem 1rem;
-    background: rgba(29, 185, 84, 0.15);
-    border-radius: 8px;
-    font-size: 0.9rem;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .info-card .analysis-status.error {
-    background: rgba(255, 107, 107, 0.15);
-    border: 1px solid rgba(255, 107, 107, 0.3);
-    color: #ff8787;
-  }
-
-  .info-card .analysis-status.success {
-    background: rgba(29, 185, 84, 0.15);
-    border: 1px solid rgba(29, 185, 84, 0.3);
-  }
-
   /* Bottom controls - compact */
   .bottom-controls {
     position: fixed;
@@ -687,7 +748,9 @@
     left: 0;
     right: 0;
     padding: 0;
-    transition: opacity 0.3s ease, transform 0.3s ease;
+    transition:
+      opacity 0.3s ease,
+      transform 0.3s ease;
     z-index: 100;
   }
 

@@ -1,7 +1,8 @@
 <script>
-  import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
-  import { SpotifyAuth } from '$lib/auth/SpotifyAuth.js';
+  import { onMount, onDestroy } from "svelte";
+  import QRCode from "qrcode";
+  import { get } from "svelte/store";
+  import { SpotifyAuth } from "$lib/auth/SpotifyAuth.js";
   import {
     authStatus,
     currentUser,
@@ -13,79 +14,106 @@
     setAuthenticating,
     resetAuth,
     checkExistingAuth,
-  } from '$lib/stores/authStore.js';
+  } from "$lib/stores/authStore.js";
 
   let spotifyAuth;
   let checkingAuth = true;
+  let qrCodeDataUrl = "";
+  let showQrCode = false;
+  let unlistenAuth;
 
   onMount(async () => {
     spotifyAuth = new SpotifyAuth();
 
     const currentStatus = get(authStatus);
 
-    if (currentStatus !== 'authenticated') {
+    if (currentStatus !== "authenticated") {
       try {
         const restored = await checkExistingAuth();
         if (restored) {
-          console.log('[SpotifyConnect] Restored authentication from persisted session');
+          console.log(
+            "[SpotifyConnect] Restored authentication from persisted session",
+          );
         }
       } catch (error) {
-        console.error('[SpotifyConnect] Failed to restore authentication:', error);
+        console.error(
+          "[SpotifyConnect] Failed to restore authentication:",
+          error,
+        );
       }
     } else {
-      console.log('[SpotifyConnect] Authentication already active');
+      console.log("[SpotifyConnect] Authentication already active");
     }
 
     checkingAuth = false;
 
     // Setup deep link listener for OAuth callback
-    const { listen } = await import('@tauri-apps/api/event');
+    const { listen } = await import("@tauri-apps/api/event");
 
-    const unlisten = await listen('deep-link', async (event) => {
-      console.log('Deep link event received:', event.payload);
+    const unlisten = await listen("deep-link", async (event) => {
+      console.log("Deep link event received:", event.payload);
 
       try {
         // Extract authorization code from URL
         const url = event.payload;
         const urlObj = new URL(url);
-        const code = urlObj.searchParams.get('code');
+        const code = urlObj.searchParams.get("code");
 
         if (code) {
-          console.log('Authorization code received, exchanging for token...');
+          console.log("Authorization code received, exchanging for token...");
           await handleCallback(code);
         } else {
-          console.error('No authorization code in callback URL');
-          setAuthError('Invalid callback URL');
+          console.error("No authorization code in callback URL");
+          setAuthError("Invalid callback URL");
         }
       } catch (error) {
-        console.error('Failed to handle deep link:', error);
+        console.error("Failed to handle deep link:", error);
         setAuthError(error.message);
+      }
+    });
+
+    // Setup listener for auth code from local server
+    // Setup listener for auth code from local server
+
+    unlistenAuth = await listen("spotify-auth-code", async (event) => {
+      console.log("Received auth code from local server:", event);
+      const code = event.payload;
+      if (code) {
+        // For device auth, we MUST use the Relay URL as the redirect_uri
+        await handleCallback(code, spotifyAuth.relayBaseUrl);
       }
     });
 
     // Cleanup listener on component destroy
     return () => {
-      unlisten();
+      if (unlistenAuth) unlistenAuth();
     };
+  });
+
+  onDestroy(() => {
+    if (unlistenAuth) unlistenAuth();
   });
 
   async function handleConnect() {
     try {
       setAuthenticating();
+      showQrCode = true;
 
-      // Start OAuth flow (returns auth code on Android, or waits for deep-link on desktop)
-      const code = await spotifyAuth.startAuth();
+      // Start Device Auth (Local Server)
+      const { authUrl } = await spotifyAuth.startDeviceAuth();
 
-      if (code) {
-        console.log('[SpotifyConnect] Received authorization code, exchanging for token...');
-        // Exchange code for token
-        await handleCallback(code);
-      } else {
-        console.log('[SpotifyConnect] Authorization window opened. Waiting for callback...');
-        // On desktop, callback will be handled by deep-link listener
-      }
+      // Generate QR Code
+      qrCodeDataUrl = await QRCode.toDataURL(authUrl, {
+        width: 256,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#ffffff",
+        },
+      });
     } catch (error) {
       setAuthError(error.message);
+      showQrCode = false;
     }
   }
 
@@ -93,7 +121,7 @@
     try {
       await spotifyAuth.logout();
       resetAuth();
-      console.log('Logged out successfully');
+      console.log("Logged out successfully");
     } catch (error) {
       setAuthError(error.message);
     }
@@ -101,19 +129,19 @@
 
   // TODO: This will be called when OAuth callback is received
   // For Phase 1, we'll need to setup a deep link handler
-  async function handleCallback(code) {
+  async function handleCallback(code, redirectUri = null) {
     try {
       setAuthenticating();
 
       // Exchange code for token
-      await spotifyAuth.exchangeCodeForToken(code);
+      await spotifyAuth.exchangeCodeForToken(code, redirectUri);
 
       // Get user info
       const user = await spotifyAuth.getCurrentUser();
       const token = await spotifyAuth.getStoredToken();
 
       setAuthenticated(user, token.access_token);
-      console.log('Successfully authenticated:', user.display_name);
+      console.log("Successfully authenticated:", user.display_name);
     } catch (error) {
       setAuthError(error.message);
     }
@@ -137,7 +165,7 @@
           />
         {:else}
           <div class="avatar-placeholder">
-            {$currentUser.display_name?.charAt(0) || 'U'}
+            {$currentUser.display_name?.charAt(0) || "U"}
           </div>
         {/if}
         <div class="user-details">
@@ -151,11 +179,16 @@
     </div>
   {:else if $isAuthenticating}
     <div class="authenticating">
-      <div class="spinner"></div>
-      <p>Connecting to Spotify...</p>
-      <p class="hint">
-        A browser window should open. Please authorize musicViz.
-      </p>
+      {#if showQrCode && qrCodeDataUrl}
+        <div class="qr-container">
+          <img src={qrCodeDataUrl} alt="Scan to Login" />
+        </div>
+        <p>Scan with your phone to login</p>
+        <p class="hint">Make sure your phone is on the same Wi-Fi</p>
+      {:else}
+        <div class="spinner"></div>
+        <p>Starting login server...</p>
+      {/if}
     </div>
   {:else}
     <div class="connect-prompt">
@@ -367,5 +400,18 @@
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.9rem;
     margin: 0.5rem 0 0;
+  }
+
+  .qr-container {
+    background: white;
+    padding: 1rem;
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+  }
+
+  .qr-container img {
+    display: block;
+    width: 200px;
+    height: 200px;
   }
 </style>

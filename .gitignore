@@ -39,4 +39,9 @@ coverage/
 
 # Temporary files
 *.tmp
-.cache/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+

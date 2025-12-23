@@ -21,6 +21,9 @@ export class SpotifyAuth {
     if (!this.clientId) {
       throw new Error('VITE_SPOTIFY_CLIENT_ID not found in environment variables');
     }
+
+    // Relay URL for Device Auth flow
+    this.relayBaseUrl = import.meta.env.VITE_SPOTIFY_RELAY_URL || 'http://192.168.7.70:5173/relay.html';
   }
 
   /**
@@ -76,37 +79,56 @@ export class SpotifyAuth {
   }
 
   /**
-   * Start Device OAuth flow - for TV/devices without easy text input
-   * Shows QR code and waits for user to complete auth on phone
-   * @returns {Promise<{authUrl: string, userCode: string}>}
+   * Start Device OAuth flow using a Relay page
+   * This allows a single Redirect URI to support dynamic local IPs
+   * @returns {Promise<{authUrl: string, message: string}>}
    */
   async startDeviceAuth() {
     try {
       // Generate PKCE challenge
       const codeChallenge = await this.generateCodeChallenge();
 
-      // Use a web-based redirect that shows the code
-      const webRedirectUri = 'https://spotify-auth-display.github.io/callback';
+      // Start local auth server (fixed port 8888)
+      const localServerUrl = await invoke('start_local_auth_server');
 
-      // Build authorization URL
-      const params = new URLSearchParams({
+      // Extract just the authority (IP:PORT) for the state param
+      const localAuthority = localServerUrl.replace('http://', '').replace('/', '');
+
+      // Determine the Relay URL
+      // Use environment variable if set, otherwise fall back to local dev server
+      // Note: In production, this MUST be set to the public URL (e.g. Lambda/API Gateway)
+      const relayBaseUrl = this.relayBaseUrl;
+
+      console.log('[DeviceAuth] Using Relay URL:', relayBaseUrl);
+
+      // Build Spotify Authorization URL
+      // IMPORTANT: The redirect_uri must match what is in the Spotify Dashboard
+      const spotifyParams = new URLSearchParams({
         client_id: this.clientId,
         response_type: 'code',
-        redirect_uri: webRedirectUri,
+        redirect_uri: relayBaseUrl, // The relay page is the registered redirect URI
         scope: this.scopes.join(' '),
         code_challenge_method: 'S256',
         code_challenge: codeChallenge,
         show_dialog: 'true',
+        state: localAuthority // Pass local IP as state so relay knows where to return
       });
 
-      const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
+      const spotifyAuthUrl = `https://accounts.spotify.com/authorize?${spotifyParams.toString()}`;
 
-      console.log('[DeviceAuth] Generated auth URL for QR code');
+      // The QR code should point to the Relay Page with the auth_url param
+      // actually, we can just point directly to Spotify Auth URL if we use the state param correctly!
+      // YES: If we send the user to Spotify with redirect_uri=RELAY and state=LOCAL_IP,
+      // Spotify will send them to RELAY?code=...&state=LOCAL_IP
+      // And RELAY will redirect to LOCAL_IP.
 
-      // Return URL for QR code display and wait for manual code entry
+      // So the QR code is just the Spotify Auth URL!
+
+      console.log('[DeviceAuth] Generated auth URL via Relay');
+
       return {
-        authUrl,
-        message: 'Scan QR code with your phone to login'
+        authUrl: spotifyAuthUrl,
+        message: 'Scan QR code to login'
       };
     } catch (error) {
       console.error('Failed to start device auth:', error);
@@ -284,9 +306,10 @@ export class SpotifyAuth {
   /**
    * Exchange authorization code for access token
    * @param {string} code - Authorization code from Spotify redirect
+   * @param {string} [redirectUri] - Optional redirect URI to use (defaults to this.redirectUri)
    * @returns {Promise<{access_token: string, refresh_token: string, expires_in: number}>}
    */
-  async exchangeCodeForToken(code) {
+  async exchangeCodeForToken(code, redirectUri = null) {
     try {
       // Get code_verifier from Rust backend
       const codeVerifier = await invoke('get_code_verifier');
@@ -302,7 +325,7 @@ export class SpotifyAuth {
         body: new URLSearchParams({
           grant_type: 'authorization_code',
           code: code,
-          redirect_uri: this.redirectUri,
+          redirect_uri: redirectUri || this.redirectUri,
           client_id: this.clientId,
           code_verifier: codeVerifier, // PKCE verifier, not secret!
         }),

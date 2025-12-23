@@ -1,4 +1,5 @@
 // Spotify authentication module
+mod auth_server;
 mod spotify_auth;
 
 // Govee integration module
@@ -59,6 +60,8 @@ pub fn run() {
             spotify_auth::logout,
             spotify_auth::open_url,
             spotify_auth::test_keyring,
+            // Auth server commands
+            auth_server::start_local_auth_server,
             // Govee integration commands
             govee::govee_discover_devices,
             govee::govee_send_lan_command,
