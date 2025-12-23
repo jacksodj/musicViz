@@ -1,11 +1,11 @@
 /**
  * Audio Integration Module
  *
- * Connects the Spotify Web Playback SDK to the AudioAnalyzer
+ * Connects audio sources (Spotify Web Playback SDK or Navidrome) to the AudioAnalyzer
  * for real-time visualization.
  *
  * This module handles the Web Audio API plumbing required to
- * capture audio from the Spotify player for analysis.
+ * capture audio from players for analysis.
  */
 
 import { AudioAnalyzer } from './AudioAnalyzer.js';
@@ -17,14 +17,17 @@ import {
 } from '$lib/stores/audioStore.js';
 
 export class AudioIntegration {
-  constructor(spotifyPlayer) {
-    this.spotifyPlayer = spotifyPlayer;
+  constructor(player = null) {
+    this.spotifyPlayer = player; // For backwards compatibility
     this.analyzer = null;
     this.isConnected = false;
 
     // Audio elements and nodes
     this.audioElement = null;
     this.mediaElementSource = null;
+
+    // Source type tracking
+    this.sourceType = null; // 'spotify' | 'navidrome' | null
   }
 
   /**
@@ -263,6 +266,46 @@ export class AudioIntegration {
   isAudioConnected() {
     return this.isConnected;
   }
+
+  /**
+   * Connect directly to an audio element (for Navidrome)
+   * Much simpler than Spotify since we control the audio element
+   *
+   * @param {HTMLAudioElement} audioElement
+   * @returns {Promise<void>}
+   */
+  async connectToAudioElement(audioElement) {
+    if (!this.analyzer) {
+      throw new Error('AudioAnalyzer not initialized. Call initialize() first.');
+    }
+
+    if (!audioElement) {
+      throw new Error('No audio element provided');
+    }
+
+    try {
+      console.log('[AudioIntegration] Connecting to provided audio element');
+
+      this.audioElement = audioElement;
+      this.sourceType = 'navidrome';
+
+      // Connect the audio element to our analyzer
+      this.analyzer.connectSource(audioElement);
+
+      // Start the analysis loop
+      this.analyzer.startAnalysis((audioData) => {
+        updateAudioData(audioData);
+      });
+
+      this.isConnected = true;
+      setAnalysisState('active');
+
+      console.log('[AudioIntegration] Successfully connected to audio element for analysis');
+    } catch (error) {
+      setAnalysisError(`Failed to connect to audio: ${error.message}`);
+      throw error;
+    }
+  }
 }
 
 /**
@@ -364,6 +407,97 @@ export async function setupAudioIntegration(spotifyPlayer) {
     // Also retry connection if not successful yet
     if (!connectionSuccessful && spotifyPlayer.isPlayerReady()) {
       console.log('[setupAudioIntegration] Retrying connection after user interaction...');
+      await attemptConnection('user-interaction');
+    }
+  };
+
+  document.addEventListener('click', resumeOnInteraction, { once: true });
+  document.addEventListener('keydown', resumeOnInteraction, { once: true });
+
+  return integration;
+}
+
+/**
+ * Helper function to set up audio integration for Navidrome
+ *
+ * Usage in a Svelte component:
+ *
+ * import { setupNavidromeAudioIntegration } from '$lib/services/AudioIntegration.js';
+ *
+ * let audioIntegration;
+ *
+ * onMount(async () => {
+ *   const audioElement = navidromePlayerStore.getAudioElement();
+ *   audioIntegration = await setupNavidromeAudioIntegration(audioElement);
+ * });
+ */
+export async function setupNavidromeAudioIntegration(navidromePlayer) {
+  const integration = new AudioIntegration();
+  let connectionSuccessful = false;
+
+  console.log('[setupNavidromeAudioIntegration] Starting audio integration setup...');
+
+  // Initialize the analyzer
+  await integration.initialize();
+
+  // Attempt to connect to audio element
+  const attemptConnection = async (context = 'unknown') => {
+    if (connectionSuccessful) {
+      console.log('[setupNavidromeAudioIntegration] Already connected, skipping');
+      return;
+    }
+
+    const audioElement = navidromePlayer.getAudioElement?.() || navidromePlayer;
+
+    if (!audioElement) {
+      console.log('[setupNavidromeAudioIntegration] No audio element available yet');
+      return;
+    }
+
+    try {
+      console.log(`[setupNavidromeAudioIntegration] Attempting connection (context: ${context})...`);
+      await integration.connectToAudioElement(audioElement);
+      connectionSuccessful = true;
+      console.log('[setupNavidromeAudioIntegration] ✓ Connection successful!');
+    } catch (error) {
+      console.error(`[setupNavidromeAudioIntegration] ✗ Connection failed (${context}):`, error.message);
+    }
+  };
+
+  // Connect if player is ready
+  if (navidromePlayer.isPlayerReady?.() || navidromePlayer instanceof HTMLAudioElement) {
+    await attemptConnection('player-ready');
+  }
+
+  // Listen for player ready event
+  if (navidromePlayer.on) {
+    navidromePlayer.on('ready', async () => {
+      console.log('[setupNavidromeAudioIntegration] Player ready event received');
+      await attemptConnection('ready-event');
+    });
+
+    // Listen for state changes - connect when playback starts
+    navidromePlayer.on('state_changed', async (state) => {
+      if (!state.paused && state.track && !connectionSuccessful) {
+        console.log('[setupNavidromeAudioIntegration] Music is playing, connecting...');
+        await attemptConnection('playback-started');
+      }
+
+      if (!state.paused && connectionSuccessful) {
+        if (integration.analyzer && !integration.analyzer.isAnalyzing) {
+          console.log('[setupNavidromeAudioIntegration] Resuming audio analysis...');
+          integration.resumeAnalysis();
+        }
+      }
+    });
+  }
+
+  // Ensure audio context resumes on user interaction
+  const resumeOnInteraction = async () => {
+    console.log('[setupNavidromeAudioIntegration] User interaction detected, resuming audio context...');
+    await integration.resume();
+
+    if (!connectionSuccessful) {
       await attemptConnection('user-interaction');
     }
   };

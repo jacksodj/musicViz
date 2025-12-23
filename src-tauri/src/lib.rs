@@ -1,6 +1,9 @@
 // Spotify authentication module
 mod spotify_auth;
 
+// Navidrome authentication module
+mod navidrome_auth;
+
 // Govee integration module
 mod govee;
 
@@ -21,6 +24,8 @@ pub fn run() {
         // Initialize Spotify authentication state
         .manage(spotify_auth::PKCEState::new())
         .manage(spotify_auth::SpotifyAuthState::new())
+        // Initialize Navidrome authentication state
+        .manage(navidrome_auth::NavidromeAuthState::new())
         // Initialize Govee state
         .manage(govee::GoveeState::default())
         // Setup deep link handler for OAuth callback
@@ -65,6 +70,11 @@ pub fn run() {
             govee::govee_get_device,
             govee::govee_get_all_devices,
             govee::govee_clear_devices,
+            // Navidrome auth commands
+            navidrome_auth::store_navidrome_credentials,
+            navidrome_auth::get_navidrome_credentials,
+            navidrome_auth::has_navidrome_credentials,
+            navidrome_auth::navidrome_logout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

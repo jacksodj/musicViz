@@ -1,17 +1,36 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+
+  // Components
+  import SourceSelector from '$lib/components/SourceSelector.svelte';
   import SpotifyConnect from '$lib/components/SpotifyConnect.svelte';
+  import NavidromeConnect from '$lib/components/NavidromeConnect.svelte';
+  import NavidromeBrowser from '$lib/components/NavidromeBrowser.svelte';
+  import NavidromeQueue from '$lib/components/NavidromeQueue.svelte';
   import PlayerControls from '$lib/components/PlayerControls.svelte';
   import PluginManager from '$lib/components/PluginManager.svelte';
   import GoveeControl from '$lib/components/GoveeControl.svelte';
+
+  // Source store
+  import { audioSource, isSourceSelected, clearSource } from '$lib/stores/sourceStore.js';
+
+  // Spotify stores
   import { isAuthenticated, checkExistingAuth } from '$lib/stores/authStore.js';
   import { playerStore, playerState } from '$lib/stores/playerStore.js';
+
+  // Navidrome stores
+  import { isNavidromeAuthenticated, checkExistingNavidromeAuth } from '$lib/stores/navidromeAuthStore.js';
+  import { navidromePlayerStore, navidromePlayerState } from '$lib/stores/navidromePlayerStore.js';
+
+  // Services
   import { analysisStore, hasAnalysis, beats, analysisError } from '$lib/stores/analysisStore.js';
   import { spotifyAnalysisService } from '$lib/services/SpotifyAnalysisService.js';
+  import { setupNavidromeAudioIntegration } from '$lib/services/AudioIntegration.js';
   import { initializePluginSystem, pluginRegistry } from '$lib/plugins/index.js';
   import { testKeyring } from '$lib/utils/testKeyring.js';
 
+  // Player state
   let playerInitialized = $state(false);
   let initializingPlayer = $state(false);
   let initError = $state(null);
@@ -19,34 +38,47 @@
   let currentPluginId = $state('beat-pulse');
   let availablePlugins = $state([]);
   let visualizationCanvas = $state(null);
+  let navidromeAudioIntegration = $state(null);
 
   // UI state
   let showMenu = $state(false);
+  let showBrowser = $state(false);
+  let showQueue = $state(false);
   let showControls = $state(true);
   let hideControlsTimeout = null;
   let lastInteractionTime = $state(Date.now());
 
-  // Initialize player when authenticated
+  // Derived: current player state based on source
+  const currentPlayerState = $derived(
+    $audioSource === 'navidrome' ? $navidromePlayerState : $playerState
+  );
+
+  // Derived: is authenticated for current source
+  const isCurrentSourceAuthenticated = $derived(
+    $audioSource === 'spotify' ? $isAuthenticated :
+    $audioSource === 'navidrome' ? $isNavidromeAuthenticated :
+    false
+  );
+
+  // Initialize player when authenticated (for current source)
   $effect(() => {
-    if ($isAuthenticated && !playerInitialized && !initializingPlayer) {
+    if (isCurrentSourceAuthenticated && !playerInitialized && !initializingPlayer) {
       initializePlayer();
     }
   });
 
-  // Track change detection - fetch analysis when track changes
+  // Track change detection - fetch analysis when track changes (Spotify only)
   $effect(() => {
+    if ($audioSource !== 'spotify') return;
+
     const track = $playerState.currentTrack;
     const trackId = track?.id;
-
-    console.log('[+page] $effect running - $playerState.currentTrack:', track);
-    console.log('[+page] trackId:', trackId, 'currentTrackId:', currentTrackId);
 
     if (trackId && trackId !== currentTrackId) {
       console.log(`[+page] Track changed: ${track.name} by ${track.artists[0]?.name}`);
       currentTrackId = trackId;
       fetchAnalysis(trackId);
 
-      // Prefetch analysis for next tracks in queue
       if ($playerState.nextTracks && $playerState.nextTracks.length > 0) {
         prefetchNextTracks($playerState.nextTracks);
       }
@@ -58,10 +90,24 @@
     initError = null;
 
     try {
-      console.log('Initializing Spotify Web Playback SDK...');
-      await playerStore.initialize();
+      if ($audioSource === 'spotify') {
+        console.log('Initializing Spotify Web Playback SDK...');
+        await playerStore.initialize();
+        console.log('Spotify player initialized successfully');
+      } else if ($audioSource === 'navidrome') {
+        console.log('Initializing Navidrome player...');
+        await navidromePlayerStore.initialize();
+
+        // Set up audio integration for visualization
+        const player = navidromePlayerStore.navidromePlayer;
+        if (player) {
+          navidromeAudioIntegration = await setupNavidromeAudioIntegration(player);
+        }
+
+        console.log('Navidrome player initialized successfully');
+      }
+
       playerInitialized = true;
-      console.log('Spotify player initialized successfully');
     } catch (error) {
       console.error('Failed to initialize player:', error);
       initError = error.message;
@@ -74,7 +120,6 @@
     try {
       analysisStore.setLoading(true);
 
-      // Get access token from player (uses same source as Web Playback SDK)
       const accessToken = await playerStore.spotifyPlayer?.getAccessToken();
 
       if (!accessToken) {
@@ -83,18 +128,15 @@
         return;
       }
 
-      // Fetch analysis
       console.log(`[+page] Fetching analysis for track ${trackId}`);
       const analysis = await spotifyAnalysisService.getAnalysis(trackId, accessToken);
 
-      // Store in analysis store
       analysisStore.setAnalysis(trackId, analysis);
 
       console.log(`[+page] Analysis loaded - ${analysis.beats?.length} beats, ${analysis.segments?.length} segments`);
     } catch (error) {
       console.error('[+page] Failed to fetch analysis:', error);
 
-      // More specific error messages
       if (error.message.includes('Forbidden')) {
         analysisStore.setError('Audio analysis not available (requires Spotify Premium)');
       } else if (error.message.includes('Unauthorized')) {
@@ -116,18 +158,15 @@
     }
   }
 
-  // Handle UI interaction - show controls and reset hide timer
   function handleInteraction() {
     lastInteractionTime = Date.now();
     showControls = true;
 
-    // Clear existing timeout
     if (hideControlsTimeout) {
       clearTimeout(hideControlsTimeout);
     }
 
-    // Hide controls after 3 seconds of no interaction (only when playing)
-    if ($playerState.isPlaying) {
+    if (currentPlayerState.isPlaying) {
       hideControlsTimeout = setTimeout(() => {
         showControls = false;
       }, 3000);
@@ -136,10 +175,9 @@
 
   // Auto-hide controls when playing
   $effect(() => {
-    if ($playerState.isPlaying) {
-      handleInteraction(); // Start the timer
+    if (currentPlayerState.isPlaying) {
+      handleInteraction();
     } else {
-      // Always show controls when paused
       showControls = true;
       if (hideControlsTimeout) {
         clearTimeout(hideControlsTimeout);
@@ -163,18 +201,46 @@
     return { native, milkdrop };
   });
 
+  function handleSwitchSource() {
+    // Disconnect current player
+    if ($audioSource === 'spotify' && playerInitialized) {
+      playerStore.disconnect();
+    } else if ($audioSource === 'navidrome' && playerInitialized) {
+      navidromePlayerStore.disconnect();
+      if (navidromeAudioIntegration) {
+        navidromeAudioIntegration.disconnect();
+        navidromeAudioIntegration = null;
+      }
+    }
+
+    // Reset player state
+    playerInitialized = false;
+    initializingPlayer = false;
+    initError = null;
+    currentTrackId = null;
+
+    // Clear source to show selector
+    clearSource();
+    showMenu = false;
+  }
+
   onMount(async () => {
-    // Make test function available globally
     window.testKeyring = testKeyring;
     console.log('[+page] Keyring test available. Run: testKeyring()');
 
-    // Check for existing authentication (persisted tokens)
-    console.log('[+page] Checking for existing authentication...');
-    const hasExistingAuth = await checkExistingAuth();
-    if (hasExistingAuth) {
-      console.log('[+page] Restored existing authentication');
-    } else {
-      console.log('[+page] No existing authentication found');
+    // Check for existing authentication based on selected source
+    if ($audioSource === 'spotify') {
+      console.log('[+page] Checking for existing Spotify authentication...');
+      const hasExistingAuth = await checkExistingAuth();
+      if (hasExistingAuth) {
+        console.log('[+page] Restored existing Spotify authentication');
+      }
+    } else if ($audioSource === 'navidrome') {
+      console.log('[+page] Checking for existing Navidrome authentication...');
+      const hasExistingAuth = await checkExistingNavidromeAuth();
+      if (hasExistingAuth) {
+        console.log('[+page] Restored existing Navidrome authentication');
+      }
     }
 
     // Initialize plugin system
@@ -193,24 +259,37 @@
   });
 
   onDestroy(async () => {
-    // Clean up
     if (hideControlsTimeout) {
       clearTimeout(hideControlsTimeout);
     }
     if (playerInitialized) {
-      await playerStore.disconnect();
+      if ($audioSource === 'spotify') {
+        await playerStore.disconnect();
+      } else if ($audioSource === 'navidrome') {
+        await navidromePlayerStore.disconnect();
+        if (navidromeAudioIntegration) {
+          navidromeAudioIntegration.disconnect();
+        }
+      }
     }
     analysisStore.clear();
   });
 </script>
 
 <main>
-  {#if !$isAuthenticated}
+  {#if !$isSourceSelected}
+    <!-- Source Selection -->
+    <SourceSelector />
+  {:else if $audioSource === 'spotify' && !$isAuthenticated}
+    <!-- Spotify Login -->
     <SpotifyConnect />
+  {:else if $audioSource === 'navidrome' && !$isNavidromeAuthenticated}
+    <!-- Navidrome Login -->
+    <NavidromeConnect />
   {:else}
+    <!-- Main App -->
     <div class="app-container">
-      <!-- Full-screen visualization via plugin system -->
-      <!-- Only load plugin after player is initialized to avoid interfering with Spotify SDK -->
+      <!-- Full-screen visualization -->
       {#if playerInitialized}
         <PluginManager
           pluginId={currentPluginId}
@@ -223,28 +302,68 @@
       <!-- Govee Light Control -->
       <GoveeControl
         canvas={visualizationCanvas}
-        isPlaying={$playerState.isPlaying}
+        isPlaying={currentPlayerState.isPlaying}
       />
+
+      <!-- Navidrome Browser Panel -->
+      {#if $audioSource === 'navidrome' && showBrowser}
+        <div class="side-panel left">
+          <NavidromeBrowser onClose={() => showBrowser = false} />
+        </div>
+      {/if}
+
+      <!-- Navidrome Queue Panel -->
+      {#if $audioSource === 'navidrome' && showQueue}
+        <div class="side-panel right">
+          <NavidromeQueue onClose={() => showQueue = false} />
+        </div>
+      {/if}
 
       <!-- Overlay UI -->
       <div class="overlay-ui" class:controls-hidden={!showControls}>
-        <!-- Top bar with transparent title and hamburger menu -->
+        <!-- Top bar -->
         <div class="top-bar">
           <h1 class="app-title">musicViz</h1>
 
-          <button
-            class="hamburger-btn"
-            onclick={() => { showMenu = !showMenu; handleInteraction(); }}
-            aria-label="Menu"
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              {#if showMenu}
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-              {:else}
-                <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
-              {/if}
-            </svg>
-          </button>
+          <div class="top-actions">
+            {#if $audioSource === 'navidrome'}
+              <button
+                class="top-btn"
+                class:active={showBrowser}
+                onclick={() => { showBrowser = !showBrowser; showQueue = false; handleInteraction(); }}
+                aria-label="Browse music"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                </svg>
+              </button>
+
+              <button
+                class="top-btn"
+                class:active={showQueue}
+                onclick={() => { showQueue = !showQueue; showBrowser = false; handleInteraction(); }}
+                aria-label="Queue"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/>
+                </svg>
+              </button>
+            {/if}
+
+            <button
+              class="hamburger-btn"
+              onclick={() => { showMenu = !showMenu; handleInteraction(); }}
+              aria-label="Menu"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                {#if showMenu}
+                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                {:else}
+                  <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+                {/if}
+              </svg>
+            </button>
+          </div>
         </div>
 
         <!-- Slide-in menu -->
@@ -289,6 +408,16 @@
                   </button>
                 {/each}
               {/if}
+
+              <!-- Switch Source -->
+              <div class="category-label">Audio Source</div>
+              <button
+                class="viz-option source-switch"
+                onclick={handleSwitchSource}
+              >
+                <div class="viz-name">Switch Audio Source</div>
+                <div class="viz-author">Currently: {$audioSource === 'spotify' ? 'Spotify' : 'Navidrome'}</div>
+              </button>
             </div>
           </div>
         {/if}
@@ -298,7 +427,7 @@
           <div class="center-message">
             <div class="status-card">
               <div class="spinner"></div>
-              <p>Initializing Spotify player...</p>
+              <p>Initializing {$audioSource === 'spotify' ? 'Spotify' : 'Navidrome'} player...</p>
             </div>
           </div>
         {:else if initError}
@@ -310,26 +439,38 @@
               </button>
             </div>
           </div>
-        {:else if playerInitialized && !$playerState.isPlaying && !$playerState.currentTrack}
+        {:else if playerInitialized && !currentPlayerState.isPlaying && !currentPlayerState.currentTrack}
           <div class="center-message">
             <div class="instructions-card">
               <h2>Ready to visualize!</h2>
-              <ol>
-                <li>Click the play button below</li>
-                <li>Or start playing from any Spotify device</li>
-                <li>Watch the music come to life!</li>
-              </ol>
+              {#if $audioSource === 'spotify'}
+                <ol>
+                  <li>Click the play button below</li>
+                  <li>Or start playing from any Spotify device</li>
+                  <li>Watch the music come to life!</li>
+                </ol>
+              {:else}
+                <ol>
+                  <li>Click the search icon to browse music</li>
+                  <li>Select a song or album to play</li>
+                  <li>Watch the music come to life!</li>
+                </ol>
+              {/if}
               <p class="hint">
-                Analysis data loads automatically when tracks play
+                {#if $audioSource === 'spotify'}
+                  Analysis data loads automatically when tracks play
+                {:else}
+                  Real-time audio analysis powers the visualizations
+                {/if}
               </p>
             </div>
           </div>
         {/if}
 
-        <!-- Compact bottom player controls -->
+        <!-- Bottom player controls -->
         {#if playerInitialized}
           <div class="bottom-controls">
-            <PlayerControls compact={true} />
+            <PlayerControls compact={true} source={$audioSource} />
           </div>
         {/if}
       </div>
@@ -354,7 +495,6 @@
     overflow: hidden;
   }
 
-  /* Background for visualization layer */
   .app-container::before {
     content: '';
     position: absolute;
@@ -364,6 +504,51 @@
     height: 100%;
     background: linear-gradient(135deg, #0a0a0a 0%, #000000 100%);
     z-index: 0;
+  }
+
+  /* Side panels for Navidrome */
+  .side-panel {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 380px;
+    max-width: 90vw;
+    z-index: 200;
+    animation: slideInPanel 0.3s ease;
+  }
+
+  .side-panel.left {
+    left: 0;
+  }
+
+  .side-panel.right {
+    right: 0;
+  }
+
+  @keyframes slideInPanel {
+    from {
+      opacity: 0;
+      transform: translateX(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .side-panel.right {
+    animation-name: slideInPanelRight;
+  }
+
+  @keyframes slideInPanelRight {
+    from {
+      opacity: 0;
+      transform: translateX(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
   }
 
   .overlay-ui {
@@ -388,7 +573,6 @@
     pointer-events: auto;
   }
 
-  /* Top bar - minimal, transparent */
   .top-bar {
     position: fixed;
     top: 0;
@@ -415,7 +599,44 @@
     color: rgba(255, 255, 255, 0.7);
   }
 
-  /* Hamburger button */
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .top-btn {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.6);
+    transition: all 0.3s ease;
+  }
+
+  .top-btn:hover {
+    background: rgba(0, 0, 0, 0.7);
+    border-color: rgba(79, 195, 247, 0.5);
+    color: #4fc3f7;
+  }
+
+  .top-btn.active {
+    background: rgba(79, 195, 247, 0.2);
+    border-color: #4fc3f7;
+    color: #4fc3f7;
+  }
+
+  .top-btn svg {
+    width: 22px;
+    height: 22px;
+  }
+
   .hamburger-btn {
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(10px);
@@ -442,7 +663,6 @@
     height: 24px;
   }
 
-  /* Menu panel */
   .menu-panel {
     position: fixed;
     top: 70px;
@@ -506,6 +726,15 @@
     border-color: #1db954;
   }
 
+  .viz-option.source-switch {
+    border-color: rgba(79, 195, 247, 0.3);
+  }
+
+  .viz-option.source-switch:hover {
+    background: rgba(79, 195, 247, 0.1);
+    border-color: rgba(79, 195, 247, 0.5);
+  }
+
   .viz-name {
     color: white;
     font-weight: 600;
@@ -551,7 +780,6 @@
     border-color: plum;
   }
 
-  /* Center messages */
   .center-message {
     position: fixed;
     top: 50%;
@@ -628,59 +856,6 @@
     font-size: 0.95rem;
   }
 
-  .info-card {
-    background: rgba(0, 0, 0, 0.85);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(29, 185, 84, 0.3);
-    border-radius: 20px;
-    padding: 2rem 2.5rem;
-    max-width: 400px;
-    text-align: center;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  }
-
-  .info-card h3 {
-    margin: 0 0 1rem 0;
-    font-size: 1.2rem;
-    color: #1db954;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-
-  .info-card .track-name {
-    margin: 0.5rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: white;
-  }
-
-  .info-card .artist-name {
-    margin: 0.25rem 0 1.5rem 0;
-    font-size: 1.1rem;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .info-card .analysis-status {
-    margin: 1rem 0 0 0;
-    padding: 0.75rem 1rem;
-    background: rgba(29, 185, 84, 0.15);
-    border-radius: 8px;
-    font-size: 0.9rem;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .info-card .analysis-status.error {
-    background: rgba(255, 107, 107, 0.15);
-    border: 1px solid rgba(255, 107, 107, 0.3);
-    color: #ff8787;
-  }
-
-  .info-card .analysis-status.success {
-    background: rgba(29, 185, 84, 0.15);
-    border: 1px solid rgba(29, 185, 84, 0.3);
-  }
-
-  /* Bottom controls - compact */
   .bottom-controls {
     position: fixed;
     bottom: 0;
@@ -736,6 +911,11 @@
 
     .top-bar {
       padding: 12px 15px;
+    }
+
+    .side-panel {
+      width: 100%;
+      max-width: 100%;
     }
 
     .status-card,

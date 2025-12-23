@@ -8,9 +8,29 @@
     playerHasPreviousTrack,
     playerCurrentTrackInfo
   } from '$lib/stores/playerStore.js';
+  import {
+    navidromePlayerStore,
+    navidromePlayerState,
+    navidromePlayerProgress,
+    navidromeHasNextTrack,
+    navidromeHasPreviousTrack,
+    navidromeCurrentTrackInfo
+  } from '$lib/stores/navidromePlayerStore.js';
 
   // Props
-  let { compact = false } = $props();
+  let { compact = false, source = 'spotify' } = $props();
+
+  // Derived values based on source
+  let currentStore = $derived(source === 'navidrome' ? navidromePlayerStore : playerStore);
+  let currentState = $derived(source === 'navidrome' ? $navidromePlayerState : $playerState);
+  let currentProgress = $derived(source === 'navidrome' ? $navidromePlayerProgress : $playerProgress);
+  let currentHasNext = $derived(source === 'navidrome' ? $navidromeHasNextTrack : $playerHasNextTrack);
+  let currentHasPrevious = $derived(source === 'navidrome' ? $navidromeHasPreviousTrack : $playerHasPreviousTrack);
+  let currentTrackInfo = $derived(source === 'navidrome' ? $navidromeCurrentTrackInfo : $playerCurrentTrackInfo);
+
+  // Accent color based on source
+  let accentColor = $derived(source === 'navidrome' ? '#4fc3f7' : '#1db954');
+  let accentColorHover = $derived(source === 'navidrome' ? '#81d4fa' : '#1ed760');
 
   // Local state
   let isDraggingProgress = $state(false);
@@ -30,7 +50,7 @@
   // Handle play/pause toggle
   async function handleTogglePlay() {
     try {
-      await playerStore.togglePlay();
+      await currentStore.togglePlay();
     } catch (error) {
       console.error('Toggle play failed:', error);
     }
@@ -39,7 +59,7 @@
   // Handle next track
   async function handleNextTrack() {
     try {
-      await playerStore.nextTrack();
+      await currentStore.nextTrack();
     } catch (error) {
       console.error('Next track failed:', error);
     }
@@ -48,7 +68,7 @@
   // Handle previous track
   async function handlePreviousTrack() {
     try {
-      await playerStore.previousTrack();
+      await currentStore.previousTrack();
     } catch (error) {
       console.error('Previous track failed:', error);
     }
@@ -59,7 +79,7 @@
     const volume = parseFloat(e.target.value) / 100;
     localVolume = e.target.value;
     try {
-      await playerStore.setVolume(volume);
+      await currentStore.setVolume(volume);
     } catch (error) {
       console.error('Volume change failed:', error);
     }
@@ -67,15 +87,15 @@
 
   // Handle progress bar click/drag
   async function handleProgressChange(e) {
-    if (!$playerState.duration) return;
+    if (!currentState.duration) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percentage = x / rect.width;
-    const newPosition = Math.floor(percentage * $playerState.duration);
+    const newPosition = Math.floor(percentage * currentState.duration);
 
     try {
-      await playerStore.seek(newPosition);
+      await currentStore.seek(newPosition);
     } catch (error) {
       console.error('Seek failed:', error);
     }
@@ -84,14 +104,14 @@
   // Initialize volume from store
   $effect(() => {
     if (!isDraggingVolume) {
-      localVolume = $playerState.volume * 100;
+      localVolume = currentState.volume * 100;
     }
   });
 
   onMount(() => {
     // Update position every second when playing
     positionUpdateInterval = setInterval(() => {
-      if ($playerState.isPlaying && !isDraggingProgress) {
+      if (currentState.isPlaying && !isDraggingProgress) {
         // Position is already updated by the player state
       }
     }, 1000);
@@ -104,22 +124,22 @@
   });
 </script>
 
-<div class="player-controls" class:compact>
-  {#if $playerState.error && !compact}
+<div class="player-controls" class:compact style="--accent-color: {accentColor}; --accent-color-hover: {accentColorHover};">
+  {#if currentState.error && !compact}
     <div class="error-banner">
-      <span>{$playerState.error}</span>
-      <button onclick={() => playerStore.clearError()} class="close-error">×</button>
+      <span>{currentState.error}</span>
+      <button onclick={() => currentStore.clearError?.()} class="close-error">×</button>
     </div>
   {/if}
 
   <div class="player-container">
     <!-- Track Info -->
     <div class="track-info">
-      {#if $playerCurrentTrackInfo}
-        {#if $playerCurrentTrackInfo.albumArt}
+      {#if currentTrackInfo}
+        {#if currentTrackInfo.albumArt}
           <img
-            src={$playerCurrentTrackInfo.albumArt}
-            alt={$playerCurrentTrackInfo.album}
+            src={currentTrackInfo.albumArt}
+            alt={currentTrackInfo.album}
             class="album-art"
           />
         {:else}
@@ -130,8 +150,8 @@
           </div>
         {/if}
         <div class="track-details">
-          <div class="track-name">{$playerCurrentTrackInfo.name}</div>
-          <div class="track-artist">{$playerCurrentTrackInfo.artists}</div>
+          <div class="track-name">{currentTrackInfo.name}</div>
+          <div class="track-artist">{currentTrackInfo.artists}</div>
         </div>
       {:else}
         <div class="album-art-placeholder">
@@ -141,7 +161,7 @@
         </div>
         <div class="track-details">
           <div class="track-name">No track playing</div>
-          <div class="track-artist">Start playing music on Spotify</div>
+          <div class="track-artist">{source === 'navidrome' ? 'Browse and select music' : 'Start playing music on Spotify'}</div>
         </div>
       {/if}
     </div>
@@ -151,7 +171,7 @@
       <div class="control-buttons">
         <button
           onclick={handlePreviousTrack}
-          disabled={!$playerHasPreviousTrack || !$playerState.isReady}
+          disabled={!currentHasPrevious || !currentState.isReady}
           class="control-btn"
           aria-label="Previous track"
         >
@@ -162,11 +182,11 @@
 
         <button
           onclick={handleTogglePlay}
-          disabled={!$playerState.isReady}
+          disabled={!currentState.isReady}
           class="control-btn play-btn"
-          aria-label={$playerState.isPlaying ? 'Pause' : 'Play'}
+          aria-label={currentState.isPlaying ? 'Pause' : 'Play'}
         >
-          {#if $playerState.isPlaying}
+          {#if currentState.isPlaying}
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
             </svg>
@@ -179,7 +199,7 @@
 
         <button
           onclick={handleNextTrack}
-          disabled={!$playerHasNextTrack || !$playerState.isReady}
+          disabled={!currentHasNext || !currentState.isReady}
           class="control-btn"
           aria-label="Next track"
         >
@@ -191,7 +211,7 @@
 
       <!-- Progress Bar -->
       <div class="progress-container">
-        <span class="time-label">{formatTime($playerState.position)}</span>
+        <span class="time-label">{formatTime(currentState.position)}</span>
         <div
           class="progress-bar"
           onclick={handleProgressChange}
@@ -200,14 +220,14 @@
           role="slider"
           tabindex="0"
           aria-valuemin="0"
-          aria-valuemax={$playerState.duration}
-          aria-valuenow={$playerState.position}
+          aria-valuemax={currentState.duration}
+          aria-valuenow={currentState.position}
         >
           <div class="progress-bg">
-            <div class="progress-fill" style="width: {$playerProgress}%"></div>
+            <div class="progress-fill" style="width: {currentProgress}%"></div>
           </div>
         </div>
-        <span class="time-label">{formatTime($playerState.duration)}</span>
+        <span class="time-label">{formatTime(currentState.duration)}</span>
       </div>
     </div>
 
@@ -423,7 +443,7 @@
   }
 
   .play-btn {
-    background: #1db954;
+    background: var(--accent-color, #1db954);
     color: white;
     width: 48px;
     height: 48px;
@@ -435,7 +455,7 @@
   }
 
   .play-btn:hover:not(:disabled) {
-    background: #1ed760;
+    background: var(--accent-color-hover, #1ed760);
     transform: scale(1.05);
   }
 
@@ -480,7 +500,7 @@
 
   .progress-fill {
     height: 100%;
-    background: #1db954;
+    background: var(--accent-color, #1db954);
     border-radius: 2px;
     transition: width 0.1s linear;
   }
@@ -490,7 +510,7 @@
   }
 
   .progress-bar:hover .progress-fill {
-    background: #1ed760;
+    background: var(--accent-color-hover, #1ed760);
   }
 
   /* Volume Control */
@@ -527,7 +547,7 @@
     appearance: none;
     width: 12px;
     height: 12px;
-    background: #1db954;
+    background: var(--accent-color, #1db954);
     border-radius: 50%;
     cursor: pointer;
   }
@@ -535,18 +555,18 @@
   .volume-slider::-moz-range-thumb {
     width: 12px;
     height: 12px;
-    background: #1db954;
+    background: var(--accent-color, #1db954);
     border-radius: 50%;
     cursor: pointer;
     border: none;
   }
 
   .volume-slider:hover::-webkit-slider-thumb {
-    background: #1ed760;
+    background: var(--accent-color-hover, #1ed760);
   }
 
   .volume-slider:hover::-moz-range-thumb {
-    background: #1ed760;
+    background: var(--accent-color-hover, #1ed760);
   }
 
   /* Responsive */
