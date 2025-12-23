@@ -8,6 +8,8 @@ build/
 dist/
 .svelte-kit/
 src-tauri/target/
+target/
+
 
 # Environment variables
 .env
